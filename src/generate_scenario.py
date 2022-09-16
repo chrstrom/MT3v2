@@ -45,7 +45,7 @@ eval_params.update(load_yaml_into_dotdict(args.model_params))
 eval_params.recursive_update(load_yaml_into_dotdict('configs/eval/default.yaml'))
 # Generate 32-bit random seed, or use user-specified one
 random_data = os.urandom(4)
-params.general.pytorch_and_numpy_seed = 0 #int.from_bytes(random_data, byteorder="big")
+params.general.pytorch_and_numpy_seed = 3059837792 #int.from_bytes(random_data, byteorder="big")
 print(f'Using seed: {params.general.pytorch_and_numpy_seed}')
 
 # Seed pytorch and numpy for reproducibility
@@ -61,8 +61,8 @@ if eval_params.training.device == 'auto':
 
 params.data_generation.seed = params.general.pytorch_and_numpy_seed #random.randint(0, 9999999999999999999) # Tune this to get different runs
 do_plot_preds = True
-do_plot_ellipse = False
-do_plot_vel = False
+do_plot_ellipse = True
+do_plot_vel = True
 do_plot_missed_predictions = True
 
 @torch.no_grad()
@@ -118,6 +118,8 @@ def output_truth_plot(ax, prediction, labels, matched_idx, batch, params, traini
     meas_y = meas_r * np.sin(meas_theta)
 
     ax.scatter(meas_x, meas_y, marker='x', c=colors, zorder=np.inf)
+    ax.scatter(X, Y, marker='x', color="k", alpha=0.8, label="True Measurements")
+    ax.scatter(Xf, Yf, marker='x', color="r", alpha=0.8, label="False Measurements")
 
     once = True
     for i, posvel in enumerate(out):
@@ -179,7 +181,7 @@ def output_truth_plot(ax, prediction, labels, matched_idx, batch, params, traini
 
 
 data_generator = DataGenerator(params)
-last_filename = "/home/strom/MT3v2/pretrained/task1/checkpoints/" + "checkpoint_gradient_step_999999"
+last_filename = "/home/strom/models/task1/checkpoints/" + "checkpoint_gradient_step_999999"
 
 # Load model weights and pass model to correct device
 model = MT3V2(params)
@@ -195,8 +197,32 @@ mot_loss.to(params.training.device)
 
 
 # Calculate all values used for plotting
-batch, labels, unique_ids, _, trajectories, true_measurements = data_generator.get_batch()
-print((true_measurements[1]))
+batch, labels, unique_ids, _, trajectories, true_measurements, false_measurements = data_generator.get_batch()
+
+gt = true_measurements[0]
+ft = false_measurements[0]
+#print(gt_one)
+
+X = []
+Y = []
+#for gt in true_measurements:
+for sample in gt:
+    h = sample[3]
+    r = sample[0]
+    theta = sample[2]
+    X.append(r * np.cos(theta))
+    Y.append(r * np.sin(theta))
+
+
+Xf= []
+Yf = []
+for sample in ft:
+    h = sample[3]
+    r = sample[0]
+    theta = sample[2]
+    Xf.append(r * np.cos(theta))
+    Yf.append(r * np.sin(theta))
+
 prediction, intermediate_predictions, encoder_prediction, aux_classifications, _ = model.forward(batch)
 loss_dict, indices = mot_loss.forward(labels, prediction, intermediate_predictions, encoder_prediction, loss_type=params.loss.type)
 
