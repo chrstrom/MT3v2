@@ -2,6 +2,14 @@
 This repository contains the code for the paper "Can Deep Learning be Applied to Model-Based Multi-Object Tracking?" (https://arxiv.org/abs/2202.07909). The code for MT3v2 was developed as joint effort by Juliano Pinto, Georg Hess, and William Ljungbergh, and was partially based on the code available at the repositories for [DETR](https://github.com/facebookresearch/detr) and [Deformable-DETR](https://github.com/fundamentalvision/Deformable-DETR).
 
 
+## TODOS:
+
+* Make plot that can step through each timestep
+* Find the source of each true object and draw paths if applicable
+* Run a prediction step of the MT3 for each timestep and draw paths between the predictions.
+
+
+
 
 ## Setting up
 In order to set up a conda environment with all the necessary dependencies, run the command:
