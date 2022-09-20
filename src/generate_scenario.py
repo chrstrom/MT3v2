@@ -45,7 +45,7 @@ eval_params.update(load_yaml_into_dotdict(args.model_params))
 eval_params.recursive_update(load_yaml_into_dotdict('configs/eval/default.yaml'))
 # Generate 32-bit random seed, or use user-specified one
 random_data = os.urandom(4)
-params.general.pytorch_and_numpy_seed = 3059837792 #int.from_bytes(random_data, byteorder="big")
+params.general.pytorch_and_numpy_seed = int.from_bytes(random_data, byteorder="big")
 print(f'Using seed: {params.general.pytorch_and_numpy_seed}')
 
 # Seed pytorch and numpy for reproducibility
@@ -118,8 +118,8 @@ def output_truth_plot(ax, prediction, labels, matched_idx, batch, params, traini
     meas_y = meas_r * np.sin(meas_theta)
 
     ax.scatter(meas_x, meas_y, marker='x', c=colors, zorder=np.inf)
-    ax.scatter(X, Y, marker='x', color="k", alpha=0.8, label="True Measurements")
-    ax.scatter(Xf, Yf, marker='x', color="r", alpha=0.8, label="False Measurements")
+    # ax.scatter(X, Y, marker='x', color="k", alpha=0.8, label="True Measurements")
+    # ax.scatter(Xf, Yf, marker='x', color="r", alpha=0.8, label="False Measurements")
 
     once = True
     for i, posvel in enumerate(out):
@@ -240,8 +240,8 @@ output_ax.cla()
 output_ax.grid('on')
 output_truth_plot(output_ax, prediction, labels, indices, batch, params, 0)
 
-output_ax.set_xlim([-params.data_generation.field_of_view.max_range*0.2, params.data_generation.field_of_view.max_range*1.2])
-output_ax.set_ylim([-params.data_generation.field_of_view.max_range, params.data_generation.field_of_view.max_range])
+#output_ax.set_xlim([-params.data_generation.field_of_view.max_range*0.2, params.data_generation.field_of_view.max_range*1.2])
+#output_ax.set_ylim([-params.data_generation.field_of_view.max_range, params.data_generation.field_of_view.max_range])
 
 plt.show()
 

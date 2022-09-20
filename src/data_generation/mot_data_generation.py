@@ -355,6 +355,8 @@ class MotDataGenerator:
                 print(n_new_objs, 'objects were added')
             print(len(self.objects))
 
+        return self.objects
+
     def finish(self):
         """
         Should be called after the last call to `self.step()`. Removes the remaining objects, consequently adding the

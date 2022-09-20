@@ -25,6 +25,7 @@ from modules import evaluator
 from modules.models.mt3v2.mt3v2 import MT3V2
 
 
+import time
 
 
 parser = argparse.ArgumentParser()
@@ -61,9 +62,10 @@ if eval_params.training.device == 'auto':
     eval_params.training.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 
-last_filename = "/home/strom/MT3v2/pretrained/task1/checkpoints/" + "checkpoint_gradient_step_999999"
+last_filename = "/home/strom/MT3v2/task1/checkpoints/" + "checkpoint_gradient_step_999999"
 
 # Load model weights and pass model to correct device
+data_generator = DataGenerator(params)  
 model = MT3V2(params)
 
 checkpoint = torch.load(last_filename, map_location=params.training.device)
@@ -77,4 +79,32 @@ scheduler = ReduceLROnPlateau(optimizer,
                                 verbose=params.debug.print_reduce_lr_messages)
 
 
-print(model)
+#print(model)
+
+# N = 100
+# total_gospa = []
+# total_loc = []
+# total_miss = []
+# total_false = []
+# start = time.time()
+# for i in range(N):
+#     gospa_total, gospa_loc, gospa_norm_loc, gospa_miss, gospa_false = evaluator.evaluate_gospa(data_generator, model, eval_params)
+
+#     total_gospa.append(gospa_total)
+#     total_loc.append(gospa_loc)
+#     total_miss.append(gospa_miss)
+#     total_false.append(gospa_false)
+
+#     print(f"{i} / {N}")
+
+# print(f"Time taken: {time.time() - start} seconds")
+
+# total_gospa = np.array(total_gospa)
+# total_loc = np.array(total_loc)
+# total_miss = np.array(total_miss)
+# total_false = np.array(total_false)
+
+# print(f"GOSPA: {total_gospa.mean()} +/- {2*total_gospa.std()}")
+# print(f"LOC: {total_loc.mean()} +/- {2*total_loc.std()}")
+# print(f"MISS: {total_miss.mean()} +/- {2*total_miss.std()}")
+# print(f"FALSE: {total_false.mean()} +/- {2*total_false.std()}")

@@ -1,6 +1,6 @@
 data_generation:
     seed: 0
-    n_timesteps: 20
+    n_timesteps: 100
     max_objects:  16
     n_prediction_lag: 0 # 0 means predicting the last state and n_timesteps means predicting the first state
     dt: 0.1
@@ -16,6 +16,7 @@ data_generation:
         min_range: 0.5
         max_range: 15
         max_range_rate: 30
+# What should these be????
         min_theta: -3.14
         max_theta: 3.14
     birth_process:
@@ -24,3 +25,12 @@ data_generation:
         mean_vel: [0.0, 0.0]
         cov_vel: [[3.0, 0.0], [0.0, 3.0]]
     prediction_target: 'position_and_velocity'
+
+
+# For visualization:
+# p_meas = 0.0 shows that true_measurements is of cardinality 0, this is good.
+# However, the true measurements do not seem to add up to where the GT is...
+# This was because the measurements are in r, r_dot, theta.....
+# Fixed. Then sanity checked by turning the measurement noise std to zero. THIS WORKS WELL
+
+# include the above in the scenario management section perhaps...
