@@ -24,8 +24,6 @@ from modules.contrastive_loss import ContrastiveLoss
 from modules import evaluator
 from modules.models.mt3v2.mt3v2 import MT3V2
 
-from modules.evaluator import evaluate_gospa
-
 
 if __name__ == '__main__':
 

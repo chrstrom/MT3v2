@@ -1,7 +1,7 @@
 # Hyperparameters to be used by eval.py. Will override any hyperparams defined in the task or the trained model's
 # result folder
 
-n_samples: 10
+n_samples: 10 # If this is greater than 1 then we will get lower variance since each run is done multiple times
 
 data_generation:
     seed: 1

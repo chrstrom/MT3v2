@@ -40,7 +40,10 @@ print(f'Model configuration file: {args.model_params}')
 # Load hyperparameters
 params = load_yaml_into_dotdict(args.task_params)
 params.update(load_yaml_into_dotdict(args.model_params))
-eval_params = load_yaml_into_dotdict(args.task_params)
+
+#!!!!!!!!!! IMPORTANT TO LOAD AND UPDATE PARAMS FOR EVAL
+eval_params = load_yaml_into_dotdict('configs/eval/default.yaml')
+params.recursive_update(eval_params)
 eval_params.update(load_yaml_into_dotdict(args.model_params))
 eval_params.recursive_update(load_yaml_into_dotdict('configs/eval/default.yaml'))
 eval_params.data_generation.seed += 1  # make sure we don't evaluate with same seed as final evaluation after training
@@ -62,7 +65,7 @@ if eval_params.training.device == 'auto':
     eval_params.training.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 
-last_filename = "/home/strom/MT3v2/task1/checkpoints/" + "checkpoint_gradient_step_999999"
+last_filename = "/home/strom/pinto/MT3v2/task4/checkpoints/" + "checkpoint_gradient_step_399999"
 
 # Load model weights and pass model to correct device
 data_generator = DataGenerator(params)  
@@ -80,31 +83,47 @@ scheduler = ReduceLROnPlateau(optimizer,
 
 
 #print(model)
+import scipy.stats as st
+N = 100 # Note that this is multiplied by n_samples in eval params!!!!
+total_gospa = []
+total_loc = []
+total_miss = []
+total_false = []
 
-# N = 100
-# total_gospa = []
-# total_loc = []
-# total_miss = []
-# total_false = []
-# start = time.time()
-# for i in range(N):
-#     gospa_total, gospa_loc, gospa_norm_loc, gospa_miss, gospa_false = evaluator.evaluate_gospa(data_generator, model, eval_params)
+start = time.time()
+for i in range(N):
+    gospa_total, gospa_loc, gospa_norm_loc, gospa_miss, gospa_false = evaluator.evaluate_gospa(data_generator, model, eval_params)
 
-#     total_gospa.append(gospa_total)
-#     total_loc.append(gospa_loc)
-#     total_miss.append(gospa_miss)
-#     total_false.append(gospa_false)
+    total_gospa.append(gospa_total)
+    total_loc.append(gospa_loc)
+    total_miss.append(gospa_miss)
+    total_false.append(gospa_false)
 
-#     print(f"{i} / {N}")
+    print(f"{i} / {N}")
 
-# print(f"Time taken: {time.time() - start} seconds")
+print(f"Time taken: {time.time() - start} seconds")
 
-# total_gospa = np.array(total_gospa)
-# total_loc = np.array(total_loc)
-# total_miss = np.array(total_miss)
-# total_false = np.array(total_false)
+total_gospa = np.array(total_gospa)
+total_loc = np.array(total_loc)
+total_miss = np.array(total_miss)
+total_false = np.array(total_false)
 
-# print(f"GOSPA: {total_gospa.mean()} +/- {2*total_gospa.std()}")
-# print(f"LOC: {total_loc.mean()} +/- {2*total_loc.std()}")
-# print(f"MISS: {total_miss.mean()} +/- {2*total_miss.std()}")
-# print(f"FALSE: {total_false.mean()} +/- {2*total_false.std()}")
+with open('total_gospa.npy', 'wb') as f:
+    np.save(f, total_gospa)
+with open('total_loc.npy', 'wb') as f:
+    np.save(f, total_loc)
+with open('total_miss.npy', 'wb') as f:
+    np.save(f, total_miss)
+with open('total_false.npy', 'wb') as f:
+    np.save(f, total_false)
+
+
+
+"""
+Time taken: 285.16901659965515 seconds
+GOSPA: 3.3874949262566862 +/- 1.82120102201727
+LOC: 2.322494924592227 +/- 1.1180683024625047
+MISS: 0.9165 +/- 1.3693469246323227
+FALSE: 0.1485 +/- 0.5373927800036022
+
+"""

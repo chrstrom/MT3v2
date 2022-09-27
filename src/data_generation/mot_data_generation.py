@@ -128,8 +128,6 @@ class MotDataGenerator:
         self.objects = None
         self.trajectories = None
         self.measurements = None
-        self.true_measurements = None
-        self.false_measurements = None
         self.unique_ids = None
         self.unique_id_counter = None
         self.reset()
@@ -139,8 +137,6 @@ class MotDataGenerator:
         self.objects = []
         self.trajectories = {}
         self.measurements = np.array([])
-        self.true_measurements = np.array([])
-        self.false_measurements = np.array([])
         self.unique_ids = np.array([], dtype='int64')
         self.unique_id_counter = itertools.count()
 
@@ -298,9 +294,6 @@ class MotDataGenerator:
         else:
             return
 
-        new_true_measurements = true_measurements
-        new_false_measurements = false_measurements
-
         # Shuffle all generated measurements and corresponding unique ids in unison
         random_idxs = self.rng.permutation(len(new_measurements))
         new_measurements = new_measurements[random_idxs]
@@ -308,22 +301,6 @@ class MotDataGenerator:
 
         # Save measurements and unique ids
         self.measurements = np.vstack([self.measurements, new_measurements]) if self.measurements.shape[0] else new_measurements
-
-
-        if len(self.true_measurements) == 0:
-            self.true_measurements = new_true_measurements
-        elif len(true_measurements) == 0:
-            pass
-        else:
-            self.true_measurements = np.vstack([self.true_measurements, new_true_measurements]) 
-
-        if len(self.false_measurements) == 0:
-            self.false_measurements = new_false_measurements
-        elif len(false_measurements) == 0:
-            pass
-        else:
-            self.false_measurements = np.vstack([self.false_measurements, new_false_measurements]) 
-
         self.unique_ids = np.hstack([self.unique_ids, unique_obj_ids])
 
     def step(self, add_new_objects=True):
@@ -355,8 +332,6 @@ class MotDataGenerator:
                 print(n_new_objs, 'objects were added')
             print(len(self.objects))
 
-        return self.objects
-
     def finish(self):
         """
         Should be called after the last call to `self.step()`. Removes the remaining objects, consequently adding the
@@ -380,7 +355,7 @@ class MotDataGenerator:
         training_data = np.array(self.measurements.copy())
         unique_measurements_ids = self.unique_ids.copy()
 
-        return training_data, label_data, unique_measurements_ids, unique_label_ids, self.true_measurements, self.false_measurements
+        return training_data, label_data, unique_measurements_ids, unique_label_ids
 
 
 def get_position_and_velocity_from_state(state):

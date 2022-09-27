@@ -33,9 +33,7 @@ class DataGenerator:
             results = [get_single_training_example(self.datagens[0], self.n_timesteps)]
 
         # Unpack results
-
-        training_data, labels, unique_measurement_ids, unique_label_ids, trajectories, new_rngs, true_measurements, false_measurements = tuple(zip(*results))
-  
+        training_data, labels, unique_measurement_ids, unique_label_ids, trajectories, new_rngs = tuple(zip(*results))
         labels = [Tensor(l).to(torch.device(self.device)) for l in labels]
         trajectories = list(trajectories)
         unique_measurement_ids = [list(u) for u in unique_measurement_ids]
@@ -60,7 +58,7 @@ class DataGenerator:
                                               Tensor(mask).bool().to(torch.device(self.device)))
         unique_measurement_ids = Tensor(unique_measurement_ids).to(self.device)
 
-        return training_nested_tensor, labels, unique_measurement_ids, unique_label_ids, trajectories, true_measurements, false_measurements
+        return training_nested_tensor, labels, unique_measurement_ids, unique_label_ids, trajectories
 
     def __del__(self):
         self.pool.close()
@@ -83,7 +81,7 @@ def get_single_training_example(data_generator, n_timesteps):
 
     Returns:
         training_data   : A single training example
-        label_data       : Ground truth for example
+        true_data       : Ground truth for example
     """
 
     data_generator.reset()
@@ -93,10 +91,9 @@ def get_single_training_example(data_generator, n_timesteps):
         # Generate n_timesteps of data, from scratch
         data_generator.reset()
         for i in range(n_timesteps - 1):
-            # The default workings of step() is to propagate an objects forward, n timesteps. The latest step is then reported. 
             data_generator.step()
+        training_data, label_data, unique_measurement_ids, unique_label_ids = data_generator.finish()
 
-        training_data, label_data, unique_measurement_ids, unique_label_ids, true_measurements, false_measurements = data_generator.finish()
     new_rng = data_generator.rng
     return training_data, np.array(label_data).reshape(len(label_data),-1), unique_measurement_ids, unique_label_ids, \
-           data_generator.trajectories.copy(), new_rng, true_measurements, false_measurements
+           data_generator.trajectories.copy(), new_rng
