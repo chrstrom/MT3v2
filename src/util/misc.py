@@ -58,6 +58,7 @@ def nested_tensor_from_tensor_list(tensor_list: List[Tensor]):
                      : meas.shape[2]].copy_(meas)
             m[: meas.shape[1], :meas.shape[2]] = False
     else:
+        print(tensor_list[0].ndim)
         raise ValueError('not supported')
     return NestedTensor(tensor, mask)
 

@@ -153,15 +153,7 @@ def output_truth_plot(ax, prediction, labels, matched_idx, batch, params, traini
             if uncertainties is not None and do_plot_ellipse:
                 ell_position = Ellipse(xy=(pos_x, pos_y), width=uncertainties[i, 0]*4, height=uncertainties[i, 1]*4,
                                        color=color, alpha=0.4)
-                ell_velocity = Ellipse(xy=(pos_x + vel_x, pos_y + vel_y), width=uncertainties[i, 2]*4,
-                                       height=uncertainties[i, 3]*4, edgecolor=color, linestyle='--', facecolor='none')
-                ax.add_patch(ell_position)
-                ax.add_patch(ell_velocity)
-        else:
-            if do_plot_missed_predictions:
-                if once:
-                    p = ax.plot(pos_x, pos_y, marker='*', color='k', label='Unmatched Predicted Object', markersize=5)
-                    once = False
+                ell_velocity = Ellipse(xy=(indices
                 else:
                     p = ax.plot(pos_x, pos_y, marker='*', color='k', markersize=5)
 

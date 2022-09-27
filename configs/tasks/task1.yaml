@@ -1,6 +1,6 @@
 data_generation:
     seed: 0
-    n_timesteps: 100
+    n_timesteps: 40
     max_objects:  16
     n_prediction_lag: 0 # 0 means predicting the last state and n_timesteps means predicting the first state
     dt: 0.1
