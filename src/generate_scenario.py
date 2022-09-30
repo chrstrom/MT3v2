@@ -24,11 +24,69 @@ from modules.loss import MotLoss
 from modules.contrastive_loss import ContrastiveLoss
 from modules import evaluator
 from modules.models.mt3v2.mt3v2 import MT3V2
-
+from util.misc import NestedTensor
 
 from matplotlib.patches import Ellipse
 
+def get_xy_from_data(data):
+    Xgt = []
+    Ygt = []
+    for point in data:
+        Xgt.append(point[0])
+        Ygt.append(point[1])
 
+    return Xgt, Ygt
+
+from typing import Tuple
+def get_xy_from_rtheta(r: float, theta: float) -> Tuple[float, float]:
+    x = r*np.cos(theta)
+    y = r*np.sin(theta)
+    return x, y
+
+
+def get_rtheta_from_data(data):
+    r = []
+    theta = []
+    for point in data:
+        r.append(point[0])
+        theta.append(point[2])
+
+    return r, theta
+
+
+def plot_ground_truth(trajectories):
+    cmap = plt.cm.get_cmap('nipy_spectral', len(trajectories[0])) 
+
+    for color_idx, (track_id, track) in enumerate(trajectories[0].items()):
+        Xgt, Ygt = get_xy_from_data(track)
+        for i in range(len(Xgt)):
+            if i == 0:
+                plt.plot(Xgt[i:i+2], Ygt[i:i+2], 'o-',c=cmap(color_idx), alpha = i/len(Xgt), label=f"Track #{track_id}")
+            else:
+                plt.plot(Xgt[i:i+2], Ygt[i:i+2], 'o-',c=cmap(color_idx), alpha = i/len(Xgt))
+
+def pad_to_batch_max(training_data, max_len):
+    batch_size = len(training_data)
+    d_meas = training_data[0].shape[1]
+    training_data_padded = np.zeros((batch_size, max_len, d_meas))
+    mask = np.ones((batch_size, max_len))
+    for i, ex in enumerate(training_data):
+        training_data_padded[i,:len(ex),:] = ex
+        mask[i,:len(ex)] = 0
+    return training_data_padded, mask
+
+def sliding_window(tensor: NestedTensor, offset:int, window_size=20) -> NestedTensor:
+    #print(tensor)
+    max_len = max(list(map(len, tensor.tensors)))
+    window = tuple([tensor.tensors.numpy()[0][offset:offset+window_size]])
+    padded_window, mask = pad_to_batch_max(window, max_len)
+    nested_tensor = NestedTensor(torch.Tensor(padded_window).to(torch.device(params.training.device)),
+                                 torch.Tensor(mask).bool().to(torch.device(params.training.device)))
+    
+    return nested_tensor
+
+
+    
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('-tp', '--task_params', help='filepath to configuration yaml file defining the task', required=True)
@@ -47,7 +105,7 @@ if __name__ == "__main__":
     eval_params.recursive_update(load_yaml_into_dotdict('configs/eval/default.yaml'))
     # Generate 32-bit random seed, or use user-specified one
     random_data = os.urandom(4)
-    params.general.pytorch_and_numpy_seed = int.from_bytes(random_data, byteorder="big")
+    params.general.pytorch_and_numpy_seed = 2335718734 #int.from_bytes(random_data, byteorder="big")
     print(f'Using seed: {params.general.pytorch_and_numpy_seed}')
 
     # Seed pytorch and numpy for reproducibility
@@ -61,10 +119,10 @@ if __name__ == "__main__":
         eval_params.training.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 
-    params.data_generation.seed = params.general.pytorch_and_numpy_seed #random.randint(0, 9999999999999999999) # Tune this to get different runs
+    params.data_generation.seed = 2335718734 #params.general.pytorch_and_numpy_seed #random.randint(0, 9999999999999999999) # Tune this to get different runs
     do_plot_preds = True
     do_plot_ellipse = False
-    do_plot_vel = False
+    do_plot_vel = True
     do_plot_missed_predictions = False
 
     @torch.no_grad()
@@ -92,38 +150,11 @@ if __name__ == "__main__":
             out = torch.cat((pos, vel), dim=1).cpu().detach().numpy()
         out_prob = prediction.logits[training_example_to_plot].cpu().sigmoid().detach().numpy().flatten()
 
-
         # Optionally get uncertainties for chosen training example
         if hasattr(prediction, 'uncertainties'):
             uncertainties = prediction.uncertainties[training_example_to_plot].cpu().detach().numpy()
         else:
             uncertainties = None
-
-
-
-
-        # Plot xy position of measurements, alpha-coded by time
-        measurements = batch.tensors[training_example_to_plot][~batch.mask[training_example_to_plot]]
-        colors = np.zeros((measurements.shape[0], 4))
-        unique_time_values = np.array(sorted(list(set(measurements[:, 3].tolist()))))
-        def f(t):
-            """Exponential decay for alpha in time"""
-            idx = (np.abs(unique_time_values - t)).argmin()
-            return 1/1.2**(len(unique_time_values)-idx)
-
-        colors[:, 3] = [f(t) for t in measurements[:, 3].tolist()]
-        
-        measurements_cpu = measurements.cpu()
-        meas_r = measurements_cpu[:, 0]
-        meas_theta = measurements_cpu[:, 2]
-        meas_x = meas_r * np.cos(meas_theta)
-        meas_y = meas_r * np.sin(meas_theta)
-
-        if params.data_generation.n_prediction_lag == 0:
-
-            ax.scatter(meas_x, meas_y, marker='x', c=colors, zorder=np.inf)
-            # ax.scatter(X, Y, marker='x', color="k", alpha=0.8, label="True Measurements")
-            # ax.scatter(Xf, Yf, marker='x', color="r", alpha=0.8, label="False Measurements")
 
         once = True
         for i, posvel in enumerate(out):
@@ -141,12 +172,19 @@ if __name__ == "__main__":
                 gt_vy = truth[gt_idx][3]
 
                 if do_plot_preds:
-                    # Plot predicted positions
-                    p = ax.plot(pos_x, pos_y, marker='o', color='r', label='Object Pred', markersize=5)
-                    color = p[0].get_color()
-
-                    # Plot ground-truth
-                    ax.plot(gt_x, gt_y, marker='D', color='g', label='Object GT', markersize=5)
+                    if once:
+                        p = ax.plot(pos_x, pos_y, marker='o', color='r', markersize=5, label="Latest pred")
+                        color = p[0].get_color()
+                        # Plot ground-truth
+                        ax.plot(gt_x, gt_y, marker='D', color='g', markersize=5, label="Latest gt")
+                        once = False
+                    else:
+                    
+                        # Plot predicted positions
+                        p = ax.plot(pos_x, pos_y, marker='o', color='r', markersize=5)
+                        color = p[0].get_color()
+                        # Plot ground-truth
+                        ax.plot(gt_x, gt_y, marker='D', color='g', markersize=5)
 
                 # Plot arrows that indicate velocities for each object
                 if params.data_generation.prediction_target == 'position_and_velocity' and do_plot_vel:
@@ -172,82 +210,79 @@ if __name__ == "__main__":
                     if params.data_generation.prediction_target == 'position_and_velocity' and do_plot_vel:
                         ax.arrow(pos_x, pos_y, vel_x, vel_y, color='k', head_width=0.2, linestyle='--', length_includes_head=True)
 
-        #     label = "{:.2f}".format(out_prob[i])
-        #     ax.annotate(label, # this is the text
-        #                 (out[i,0], out[i,1]), # this is the point to label
-        #                 textcoords="offset points", # how to position the text
-        #                 xytext=(0,10), # distance from text to points (x,y)
-        #                 ha='center',
-        #                 color=p[0].get_color())
-
-            #ax.legend()
-
-
     data_generator = DataGenerator(params)
     last_filename = "C:/Users/chris/MT3v2/task1/checkpoints/" + "checkpoint_gradient_step_999999"
 
     # Load model weights and pass model to correct device
+    prev = params.data_generation.n_timesteps
+    params.data_generation.n_timesteps = 20
     model = MT3V2(params)
+    params.data_generation.n_timesteps = prev
 
     checkpoint = torch.load(last_filename, map_location=params.training.device)
-    model.load_state_dict(checkpoint['model_state_dict'])
 
+    model.load_state_dict(checkpoint['model_state_dict'])
     model.to(torch.device(params.training.device))
 
     mot_loss = MotLoss(params)
     mot_loss.to(params.training.device)
 
-
-
     # Calculate all values used for plotting
     batch, labels, unique_ids, _, trajectories, true_measurements, false_measurements = data_generator.get_batch()
-    
-    gt = true_measurements[0]
-    ft = false_measurements[0]
-    #print(gt_one)
 
-    X = []
-    Y = []
-    #for gt in true_measurements:
-    for sample in gt:
-        h = sample[3]
-        r = sample[0]
-        theta = sample[2]
-        X.append(r * np.cos(theta))
-        Y.append(r * np.sin(theta))
+    r, theta = get_rtheta_from_data(true_measurements[0])
+    Xt, Yt = get_xy_from_rtheta(*get_rtheta_from_data(true_measurements[0]))
+    Xf, Yf = get_xy_from_rtheta(*get_rtheta_from_data(false_measurements[0]))
+
+    #batch = sliding_window(batch, 0, 20) # Inflates covariances A LOT, why?? Seems like n_timesteps is not the same as the sequence length. Window should thus be set adaptively for 20 elements
+
+    prediction, intermediate_predictions, encoder_prediction, aux_classifications, _ = model.forward(batch)
+    loss_dict, indices = mot_loss.forward(labels, prediction, intermediate_predictions, encoder_prediction, loss_type=params.loss.type)
 
 
-    Xf= []
-    Yf = []
-    for sample in ft:
-        h = sample[3]
-        r = sample[0]
-        theta = sample[2]
-        Xf.append(r * np.cos(theta))
-        Yf.append(r * np.sin(theta))
+    fig, output_ax = plt.subplots() 
+    color = [(1, 0, 0, max(a / len(Xt), 0.01)) for a in range(len(Xt))]
+    output_ax.scatter(Xt, Yt, marker='x', c=color, zorder=np.inf, label="True Measurements")
+    color = [(0, 0, 0, max(a / len(Xf), 0.01)) for a in range(len(Xf))]
+    output_ax.scatter(Xf, Yf, marker='x', c=color, zorder=np.inf, label="False Measurements")
 
-    fig = plt.figure(constrained_layout=True)
+    plot_ground_truth(trajectories)
 
-    gs = GridSpec(2, 2, figure=fig)
-
-    output_ax = fig.add_subplot(111)
-    output_ax.set_ylabel('Y')
-    output_ax.set_xlabel('X')
+    output_ax.set_ylabel('North')
+    output_ax.set_xlabel('East')
+    output_ax.grid('on')
     output_ax.set_aspect('equal', 'box')
 
+    output_truth_plot(output_ax, prediction, labels, indices, batch, params, 0)
 
-    output_ax.cla()
-    output_ax.grid('on')
+    leg = output_ax.legend()
+    for lh in leg.legendHandles: 
+        lh.set_alpha(1)
 
-    for i in range(3):
-        params.data_generation.n_prediction_lag = i
-        prediction, intermediate_predictions, encoder_prediction, aux_classifications, _ = model.forward(batch)
-        loss_dict, indices = mot_loss.forward(labels, prediction, intermediate_predictions, encoder_prediction, loss_type=params.loss.type)
 
-        output_truth_plot(output_ax, prediction, labels, indices, batch, params, 0)
-
-    #output_ax.set_xlim([-params.data_generation.field_of_view.max_range*0.2, params.data_generation.field_of_view.max_range*1.2])
-    #output_ax.set_ylim([-params.data_generation.field_of_view.max_range, params.data_generation.field_of_view.max_range])
-
+    # Note: The ground truth tracks may have come from very early timesteps. As
+    # such, when plotting the latest tracking estimates, only the active tracks
+    # will get estimates. The green GT points overlaid GT tracks will show which
+    # tracks were active at the last timestep.
     plt.show()
 
+
+    # Plot all measurements together
+    # # Plot xy position of measurements, alpha-coded by time
+    # measurements = batch.tensors[0][~batch.mask[0]]
+    # colors = np.zeros((measurements.shape[0], 4))
+    # unique_time_values = np.array(sorted(list(set(measurements[:, 3].tolist()))))
+    # def f(t):
+    #     """Exponential decay for alpha in time"""
+    #     idx = (np.abs(unique_time_values - t)).argmin()
+    #     return 1/1.2**(len(unique_time_values)-idx)
+
+    # colors[:, 3] = [f(t) for t in measurements[:, 3].tolist()]
+    
+    # measurements_cpu = measurements.cpu()
+    # meas_r = measurements_cpu[:, 0]
+    # meas_theta = measurements_cpu[:, 2]
+    # meas_x = meas_r * np.cos(meas_theta)
+    # meas_y = meas_r * np.sin(meas_theta)
+
+    # output_ax.scatter(meas_x, meas_y, marker='x', c=colors, zorder=np.inf)
