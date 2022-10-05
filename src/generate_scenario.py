@@ -6,6 +6,10 @@ import shutil
 from collections import deque
 import argparse
 import random
+import copy
+
+
+from typing import Tuple
 
 import numpy as np
 import torch
@@ -28,6 +32,57 @@ from util.misc import NestedTensor
 
 from matplotlib.patches import Ellipse
 
+
+
+
+def clip_measurements(measurements, N, offset=0):
+    """
+    Clip measurements on the form [r, rdot, theta, t] to the time step
+    range (offset, N + offset)
+    """
+    dt = 0.1
+    measurements = measurements[0]
+    clipped_measurements = []
+    for measurement in measurements:
+        if offset * dt < measurement[3] < (N + offset) * dt:
+            clipped_measurements.append(measurement.tolist())
+
+    return tuple(np.array([clipped_measurements]))
+
+def clip_batch(tensor: NestedTensor, N: int, offset=0) -> NestedTensor:
+    measurements = tuple([tensor.tensors.numpy()[0]])
+
+    clipped_measurements = clip_measurements(measurements, N, offset)
+    max_len = max(list(map(len, clipped_measurements)))
+
+    padded_window, mask = pad_to_batch_max(clipped_measurements, max_len)
+    nested_tensor = NestedTensor(torch.Tensor(padded_window).to(torch.device(params.training.device)),
+                                 torch.Tensor(mask).bool().to(torch.device(params.training.device)))
+    return nested_tensor
+
+
+def clip_trajectories(trajectories, N, offset=0):
+    """
+    Clip ground truth data to the time step range (offset, N + offset)
+    """
+    dt = 0.1
+    trajectories = trajectories[0]
+
+    clipped_trajectories = copy.deepcopy(trajectories)
+    for track_id in trajectories:
+        trajectory = trajectories[track_id]
+        clipped_trajectory = []
+        for i in range(len(trajectory)):
+            if offset * dt < trajectory[i, 4] < (offset + N) * dt:
+                clipped_trajectory.append(trajectory[i])
+
+        clipped_trajectories[track_id] = clipped_trajectory
+
+    clipped_trajectories = {k: v for k, v in clipped_trajectories.items() if v}
+
+    return [clipped_trajectories]
+
+
 def get_xy_from_data(data):
     Xgt = []
     Ygt = []
@@ -37,7 +92,15 @@ def get_xy_from_data(data):
 
     return Xgt, Ygt
 
-from typing import Tuple
+def get_vxvy_from_data(data):
+    VXgt = []
+    VYgt = []
+    for point in data:
+        VXgt.append(point[2])
+        VYgt.append(point[3])
+
+    return VXgt, VYgt
+
 def get_xy_from_rtheta(r: float, theta: float) -> Tuple[float, float]:
     x = r*np.cos(theta)
     y = r*np.sin(theta)
@@ -59,11 +122,30 @@ def plot_ground_truth(trajectories):
 
     for color_idx, (track_id, track) in enumerate(trajectories[0].items()):
         Xgt, Ygt = get_xy_from_data(track)
+    
         for i in range(len(Xgt)):
             if i == 0:
                 plt.plot(Xgt[i:i+2], Ygt[i:i+2], 'o-',c=cmap(color_idx), alpha = i/len(Xgt), label=f"Track #{track_id}")
             else:
                 plt.plot(Xgt[i:i+2], Ygt[i:i+2], 'o-',c=cmap(color_idx), alpha = i/len(Xgt))
+
+        VXgt, VYgt = get_vxvy_from_data(track)
+
+        # Plot GT diamond and velocity arrow
+        # TODO: Do not plot latest GT for terminated tracks 
+
+        plt.plot(Xgt[-1], Ygt[-1], marker='D', color='g', markersize=5, label="Latest gt")
+        plt.arrow(Xgt[-1], Ygt[-1], VXgt[-1], VYgt[-1], color='g', head_width=0.2, length_includes_head=True)
+
+
+def plot_measurements(true_measurements, false_measurements):
+    r, theta = get_rtheta_from_data(true_measurements[0])
+    Xm, Ym = get_xy_from_rtheta(r, theta)
+    plt.scatter(Xm, Ym, c='r', marker='x', alpha = 0.75, label="true measurements")
+
+    r, theta = get_rtheta_from_data(false_measurements[0])
+    Xf, Yf = get_xy_from_rtheta(r, theta)
+    plt.scatter(Xf, Yf, c='k', marker='x', alpha = 0.1, label="false measurements")
 
 def pad_to_batch_max(training_data, max_len):
     batch_size = len(training_data)
@@ -75,6 +157,7 @@ def pad_to_batch_max(training_data, max_len):
         mask[i,:len(ex)] = 0
     return training_data_padded, mask
 
+# This should not index directly based on window_size, instead find all measurements with timestamp inside range, and plot.
 def sliding_window(tensor: NestedTensor, offset:int, window_size=20) -> NestedTensor:
     #print(tensor)
     max_len = max(list(map(len, tensor.tensors)))
@@ -85,8 +168,78 @@ def sliding_window(tensor: NestedTensor, offset:int, window_size=20) -> NestedTe
     
     return nested_tensor
 
+@torch.no_grad()
+def output_truth_plot(ax, prediction, labels, matched_idx, batch, params):
 
-    
+    assert hasattr(prediction, 'positions'), 'Positions should have been predicted for plotting.'
+    assert hasattr(prediction, 'logits'), 'Logits should have been predicted for plotting.'
+    if params.data_generation.prediction_target == 'position_and_velocity':
+        assert hasattr(prediction, 'velocities'), 'Velocities should have been predicted for plotting.'
+
+    bs, num_queries = prediction.positions.shape[:2]
+
+    if params.data_generation.prediction_target == 'position_and_shape':
+        raise NotImplementedError('Plotting not working yet for shape predictions.')
+
+    # Get ground-truth, predicted state, and logits for chosen training example
+    truth = labels[0].cpu().numpy()
+    indices = tuple([t.cpu().detach().numpy() for t in matched_idx[0]])
+    if params.data_generation.prediction_target == 'position':
+        out = prediction.positions[0].cpu().detach().numpy()
+    elif params.data_generation.prediction_target == 'position_and_velocity':
+        pos = prediction.positions[0]
+        vel = prediction.velocities[0]
+        out = torch.cat((pos, vel), dim=1).cpu().detach().numpy()
+    out_prob = prediction.logits[0].cpu().sigmoid().detach().numpy().flatten()
+
+    # Optionally get uncertainties for chosen training example
+    if hasattr(prediction, 'uncertainties'):
+        uncertainties = prediction.uncertainties[0].cpu().detach().numpy()
+    else:
+        uncertainties = None
+
+    once = True
+    for i, posvel in enumerate(out):
+        pos_x = posvel[0]
+        pos_y = posvel[1]
+        vel_x = posvel[2]
+        vel_y = posvel[3]
+
+        if i in indices[0]:
+            if do_plot_preds:
+                if once:
+                    p = ax.plot(pos_x, pos_y, marker='o', color='r', markersize=5, label="Latest pred")
+                    once = False
+                else:                
+                    # Plot predicted positions
+                    p = ax.plot(pos_x, pos_y, marker='o', color='r', markersize=5)
+                
+                color = p[0].get_color()
+
+            # Plot arrows that indicate velocities for each object
+            if params.data_generation.prediction_target == 'position_and_velocity' and do_plot_vel:
+                ax.arrow(pos_x, pos_y, vel_x, vel_y, color=color, head_width=0.2, linestyle='--', length_includes_head=True)
+
+            # Plot uncertainties (2-sigma ellipse)
+            if uncertainties is not None and do_plot_ellipse:
+                ell_position = Ellipse(xy=(pos_x, pos_y), width=uncertainties[i, 0]*4, height=uncertainties[i, 1]*4,
+                                    color=color, alpha=0.4)
+                ell_velocity = Ellipse(xy=(pos_x + vel_x, pos_y + vel_y), width=uncertainties[i, 2]*4,
+                                    height=uncertainties[i, 3]*4, edgecolor=color, linestyle='--', facecolor='none')
+                ax.add_patch(ell_position)
+                ax.add_patch(ell_velocity)
+        else:
+            if do_plot_unmatched_hypotheses:
+                if once:
+                    p = ax.plot(pos_x, pos_y, marker='*', color='k', label='Unmatched Predicted Object', markersize=5)
+                    once = False
+                else:
+                    p = ax.plot(pos_x, pos_y, marker='*', color='k', markersize=5)
+
+                if params.data_generation.prediction_target == 'position_and_velocity' and do_plot_vel:
+                    ax.arrow(pos_x, pos_y, vel_x, vel_y, color='k', head_width=0.2, linestyle='--', length_includes_head=True)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('-tp', '--task_params', help='filepath to configuration yaml file defining the task', required=True)
@@ -105,7 +258,7 @@ if __name__ == "__main__":
     eval_params.recursive_update(load_yaml_into_dotdict('configs/eval/default.yaml'))
     # Generate 32-bit random seed, or use user-specified one
     random_data = os.urandom(4)
-    params.general.pytorch_and_numpy_seed = 2335718734 #int.from_bytes(random_data, byteorder="big")
+    params.general.pytorch_and_numpy_seed = int.from_bytes(random_data, byteorder="big") #2335718734
     print(f'Using seed: {params.general.pytorch_and_numpy_seed}')
 
     # Seed pytorch and numpy for reproducibility
@@ -118,107 +271,20 @@ if __name__ == "__main__":
     if eval_params.training.device == 'auto':
         eval_params.training.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-
-    params.data_generation.seed = 2335718734 #params.general.pytorch_and_numpy_seed #random.randint(0, 9999999999999999999) # Tune this to get different runs
+    params.data_generation.seed =  2015188077 #params.general.pytorch_and_numpy_seed #2335718734 #random.randint(0, 9999999999999999999) # Tune this to get different runs
     do_plot_preds = True
-    do_plot_ellipse = False
+    do_plot_ellipse = True
     do_plot_vel = True
-    do_plot_missed_predictions = False
-
-    @torch.no_grad()
-    def output_truth_plot(ax, prediction, labels, matched_idx, batch, params, training_example_to_plot=0):
-
-        assert hasattr(prediction, 'positions'), 'Positions should have been predicted for plotting.'
-        assert hasattr(prediction, 'logits'), 'Logits should have been predicted for plotting.'
-        if params.data_generation.prediction_target == 'position_and_velocity':
-            assert hasattr(prediction, 'velocities'), 'Velocities should have been predicted for plotting.'
-
-        bs, num_queries = prediction.positions.shape[:2]
-        assert training_example_to_plot <= bs, "'training_example_to_plot' should be less than batch_size"
-
-        if params.data_generation.prediction_target == 'position_and_shape':
-            raise NotImplementedError('Plotting not working yet for shape predictions.')
-
-        # Get ground-truth, predicted state, and logits for chosen training example
-        truth = labels[training_example_to_plot].cpu().numpy()
-        indices = tuple([t.cpu().detach().numpy() for t in matched_idx[training_example_to_plot]])
-        if params.data_generation.prediction_target == 'position':
-            out = prediction.positions[training_example_to_plot].cpu().detach().numpy()
-        elif params.data_generation.prediction_target == 'position_and_velocity':
-            pos = prediction.positions[training_example_to_plot]
-            vel = prediction.velocities[training_example_to_plot]
-            out = torch.cat((pos, vel), dim=1).cpu().detach().numpy()
-        out_prob = prediction.logits[training_example_to_plot].cpu().sigmoid().detach().numpy().flatten()
-
-        # Optionally get uncertainties for chosen training example
-        if hasattr(prediction, 'uncertainties'):
-            uncertainties = prediction.uncertainties[training_example_to_plot].cpu().detach().numpy()
-        else:
-            uncertainties = None
-
-        once = True
-        for i, posvel in enumerate(out):
-            pos_x = posvel[0]
-            pos_y = posvel[1]
-            vel_x = posvel[2]
-            vel_y = posvel[3]
-
-            if i in indices[0]:
-
-                gt_idx = indices[1][np.where(indices[training_example_to_plot] == i)[0][0]]
-                gt_x = truth[gt_idx][0]
-                gt_y = truth[gt_idx][1]
-                gt_vx = truth[gt_idx][2]
-                gt_vy = truth[gt_idx][3]
-
-                if do_plot_preds:
-                    if once:
-                        p = ax.plot(pos_x, pos_y, marker='o', color='r', markersize=5, label="Latest pred")
-                        color = p[0].get_color()
-                        # Plot ground-truth
-                        ax.plot(gt_x, gt_y, marker='D', color='g', markersize=5, label="Latest gt")
-                        once = False
-                    else:
-                    
-                        # Plot predicted positions
-                        p = ax.plot(pos_x, pos_y, marker='o', color='r', markersize=5)
-                        color = p[0].get_color()
-                        # Plot ground-truth
-                        ax.plot(gt_x, gt_y, marker='D', color='g', markersize=5)
-
-                # Plot arrows that indicate velocities for each object
-                if params.data_generation.prediction_target == 'position_and_velocity' and do_plot_vel:
-                    ax.arrow(pos_x, pos_y, vel_x, vel_y, color=color, head_width=0.2, linestyle='--', length_includes_head=True)
-                    ax.arrow(gt_x, gt_y, gt_vx, gt_vy, color=p[0].get_color(), head_width=0.2, length_includes_head=True)
-
-                # Plot uncertainties (2-sigma ellipse)
-                if uncertainties is not None and do_plot_ellipse:
-                    ell_position = Ellipse(xy=(pos_x, pos_y), width=uncertainties[i, 0]*4, height=uncertainties[i, 1]*4,
-                                        color=color, alpha=0.4)
-                    ell_velocity = Ellipse(xy=(pos_x + vel_x, pos_y + vel_y), width=uncertainties[i, 2]*4,
-                                        height=uncertainties[i, 3]*4, edgecolor=color, linestyle='--', facecolor='none')
-                    ax.add_patch(ell_position)
-                    ax.add_patch(ell_velocity)
-            else:
-                if do_plot_missed_predictions:
-                    if once:
-                        p = ax.plot(pos_x, pos_y, marker='*', color='k', label='Unmatched Predicted Object', markersize=5)
-                        once = False
-                    else:
-                        p = ax.plot(pos_x, pos_y, marker='*', color='k', markersize=5)
-
-                    if params.data_generation.prediction_target == 'position_and_velocity' and do_plot_vel:
-                        ax.arrow(pos_x, pos_y, vel_x, vel_y, color='k', head_width=0.2, linestyle='--', length_includes_head=True)
+    do_plot_unmatched_hypotheses = False
 
     data_generator = DataGenerator(params)
     last_filename = "C:/Users/chris/MT3v2/task1/checkpoints/" + "checkpoint_gradient_step_999999"
 
     # Load model weights and pass model to correct device
     prev = params.data_generation.n_timesteps
-    params.data_generation.n_timesteps = 20
+    params.data_generation.n_timesteps = 20 # Hack to load the pretrained model and still generate more than 20 timesteps
     model = MT3V2(params)
-    params.data_generation.n_timesteps = prev
-
+    
     checkpoint = torch.load(last_filename, map_location=params.training.device)
 
     model.load_state_dict(checkpoint['model_state_dict'])
@@ -228,61 +294,61 @@ if __name__ == "__main__":
     mot_loss.to(params.training.device)
 
     # Calculate all values used for plotting
-    batch, labels, unique_ids, _, trajectories, true_measurements, false_measurements = data_generator.get_batch()
+    params.data_generation.n_timesteps = prev
+    measurements, labels, unique_ids, _, trajectories, true_measurements, false_measurements = data_generator.get_batch()
+    #print(trajectories)
+    #print(labels)
 
-    r, theta = get_rtheta_from_data(true_measurements[0])
-    Xt, Yt = get_xy_from_rtheta(*get_rtheta_from_data(true_measurements[0]))
-    Xf, Yf = get_xy_from_rtheta(*get_rtheta_from_data(false_measurements[0]))
-
-    #batch = sliding_window(batch, 0, 20) # Inflates covariances A LOT, why?? Seems like n_timesteps is not the same as the sequence length. Window should thus be set adaptively for 20 elements
-
-    prediction, intermediate_predictions, encoder_prediction, aux_classifications, _ = model.forward(batch)
-    loss_dict, indices = mot_loss.forward(labels, prediction, intermediate_predictions, encoder_prediction, loss_type=params.loss.type)
-
-
+    plt.ion() # Required for dynamic plot updates
     fig, output_ax = plt.subplots() 
-    color = [(1, 0, 0, max(a / len(Xt), 0.01)) for a in range(len(Xt))]
-    output_ax.scatter(Xt, Yt, marker='x', c=color, zorder=np.inf, label="True Measurements")
-    color = [(0, 0, 0, max(a / len(Xf), 0.01)) for a in range(len(Xf))]
-    output_ax.scatter(Xf, Yf, marker='x', c=color, zorder=np.inf, label="False Measurements")
 
-    plot_ground_truth(trajectories)
+    offset = 0
+    N = 20
+    for offset in range(50):
+        # Clip all data to a sliding window
+        clipped_trajectories = clip_trajectories(trajectories, N, offset)
+        clipped_true_measurements = clip_measurements(true_measurements, N, offset)
+        clipped_false_measurements = clip_measurements(false_measurements, N, offset)
+        clipped_measurements = clip_batch(measurements, N, offset)
+
+        # Infer on each window
+        #print(len(clipped_measurements.tensors[0]))
+        prediction, intermediate_predictions, encoder_prediction, aux_classifications, _ = model.forward(clipped_measurements, offset)
+        loss_dict, indices = mot_loss.forward(labels, prediction, intermediate_predictions, encoder_prediction, loss_type=params.loss.type)
+        #print(f"{len(clipped_trajectories[0])}/{len(trajectories[0])}")
+        
+        # Plot results
+        plot_measurements(clipped_true_measurements, clipped_false_measurements)
+        plot_ground_truth(clipped_trajectories)
+        output_truth_plot(output_ax, prediction, labels, indices, clipped_measurements, params)
+
+
+        output_ax.set_xlim([-2, 17]) 
+        output_ax.set_ylim([-10, 10]) 
+        fig.canvas.draw()
+        fig.canvas.flush_events()
+        time.sleep(0.1)
+        output_ax.clear()
+
+    # Batch includes all MEASUREMENTS, and thus the window should gate measurements on their timestep, not the amount of measurements.
+ 
+    # Note: The ground truth tracks may have come from very early timesteps. As
+    # such, when plotting the latest tracking estimates, only the active tracks
+    # will get estimates. The green GT points overlaid GT tracks will show which
+    # tracks were active at the last timestep.
+
+    # TODO: How to test for active hypotheses for each time step. I.e. is there a probability array that can be printed?
 
     output_ax.set_ylabel('North')
     output_ax.set_xlabel('East')
     output_ax.grid('on')
-    output_ax.set_aspect('equal', 'box')
-
-    output_truth_plot(output_ax, prediction, labels, indices, batch, params, 0)
+    #output_ax.set_aspect('equal', 'box')
 
     leg = output_ax.legend()
     for lh in leg.legendHandles: 
         lh.set_alpha(1)
 
+    # Turn off interactive and keep plot open
+    plt.ioff()
+    plt.plot()
 
-    # Note: The ground truth tracks may have come from very early timesteps. As
-    # such, when plotting the latest tracking estimates, only the active tracks
-    # will get estimates. The green GT points overlaid GT tracks will show which
-    # tracks were active at the last timestep.
-    plt.show()
-
-
-    # Plot all measurements together
-    # # Plot xy position of measurements, alpha-coded by time
-    # measurements = batch.tensors[0][~batch.mask[0]]
-    # colors = np.zeros((measurements.shape[0], 4))
-    # unique_time_values = np.array(sorted(list(set(measurements[:, 3].tolist()))))
-    # def f(t):
-    #     """Exponential decay for alpha in time"""
-    #     idx = (np.abs(unique_time_values - t)).argmin()
-    #     return 1/1.2**(len(unique_time_values)-idx)
-
-    # colors[:, 3] = [f(t) for t in measurements[:, 3].tolist()]
-    
-    # measurements_cpu = measurements.cpu()
-    # meas_r = measurements_cpu[:, 0]
-    # meas_theta = measurements_cpu[:, 2]
-    # meas_x = meas_r * np.cos(meas_theta)
-    # meas_y = meas_r * np.sin(meas_theta)
-
-    # output_ax.scatter(meas_x, meas_y, marker='x', c=colors, zorder=np.inf)

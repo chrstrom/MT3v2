@@ -18,6 +18,7 @@ class MT3V2(nn.Module):
         super().__init__()
         self.params = params
         self.d_detections = params.arch.d_detections
+        print(f"{params.data_generation.n_timesteps}, {params.arch.d_model}")
         self.temporal_encoder = LearnedPositionEncoder(params.data_generation.n_timesteps, params.arch.d_model)
 
         # Normalization factor to make all measurement dimensions have similar standard deviations
@@ -216,8 +217,12 @@ class MT3V2(nn.Module):
 
         return object_queries, query_positional_encodings, topk_adjusted_normalized_meas, scores, adjustments, adjusted_normalized_meas
 
-    def forward(self, measurements: NestedTensor):
-        mapped_time_idx = torch.round(measurements.tensors[:, :, -1] / self.params.data_generation.dt)
+    def forward(self, measurements: NestedTensor, offset: int):
+        #print(len(measurements.tensors[0]))
+        mapped_time_idx = torch.round(measurements.tensors[:, :, -1] / self.params.data_generation.dt) - offset 
+        mapped_time_idx[mapped_time_idx == 20] = 19
+        #print(len(mapped_time_idx[0]))
+        #print(mapped_time_idx)
         time_encoding = self.temporal_encoder(mapped_time_idx.long())
         preprocessed_measurements = self.preprocessor(measurements.tensors[:, :, :self.d_detections])
         mask = measurements.mask

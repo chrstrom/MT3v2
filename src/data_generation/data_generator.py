@@ -36,6 +36,7 @@ class DataGenerator:
 
         training_data, labels, unique_measurement_ids, unique_label_ids, trajectories, new_rngs, true_measurements, false_measurements = tuple(zip(*results))
   
+        print(labels)
         labels = [Tensor(l).to(torch.device(self.device)) for l in labels]
         trajectories = list(trajectories)
         unique_measurement_ids = [list(u) for u in unique_measurement_ids]
@@ -94,6 +95,7 @@ def get_single_training_example(data_generator, n_timesteps):
         data_generator.reset()
         for i in range(n_timesteps - 1):
             # The default workings of step() is to propagate an objects forward, n timesteps. The latest step is then reported. 
+            # To get Ground truths then we would need to get the output from each step here.
             data_generator.step()
 
         training_data, label_data, unique_measurement_ids, unique_label_ids, true_measurements, false_measurements = data_generator.finish()

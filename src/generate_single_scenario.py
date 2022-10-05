@@ -39,7 +39,6 @@ def clip_measurements(measurements, N, offset=0):
     return tuple(np.array([clipped_measurements]))
 
 
-
 def clip_trajectories(trajectories, N, offset=0):
     """
     Clip ground truth data to the time step range (offset, N + offset)

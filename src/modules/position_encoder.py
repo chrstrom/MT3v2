@@ -14,6 +14,8 @@ class LearnedPositionEncoder(nn.Module):
 
     def forward(self, pos_indicies):
         pos_indicies = pos_indicies.long()
+        #print(len(pos_indicies[0]))
+        #print(pos_indicies)
         return self.embeddor(pos_indicies)
 
 
@@ -22,7 +24,7 @@ class PositionEmbeddingSine(nn.Module):
     This is a more standard version of the position embedding, very similar to the one
     used by the Attention is all you need paper, generalized to work on images.
     """
-    def __init__(self,params, temperature=10000, scale=2*math.pi):
+    def __init__(self, params, temperature=10000, scale=2*math.pi):
         super().__init__()
         self.params=params
         self.num_pos_feats = params.arch.d_model
