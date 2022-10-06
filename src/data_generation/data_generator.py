@@ -35,8 +35,7 @@ class DataGenerator:
         # Unpack results
 
         training_data, labels, unique_measurement_ids, unique_label_ids, trajectories, new_rngs, true_measurements, false_measurements = tuple(zip(*results))
-  
-        print(labels)
+
         labels = [Tensor(l).to(torch.device(self.device)) for l in labels]
         trajectories = list(trajectories)
         unique_measurement_ids = [list(u) for u in unique_measurement_ids]

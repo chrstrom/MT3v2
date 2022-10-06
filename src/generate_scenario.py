@@ -1,37 +1,31 @@
 import os
 import time
-import datetime
-import re
-import shutil
-from collections import deque
 import argparse
 import random
 import copy
 
+import torch
+
+import numpy as np
+import matplotlib.pyplot as plt
 
 from typing import Tuple
 
-import numpy as np
-import torch
-from torch.optim import AdamW
-from torch.optim.lr_scheduler import ReduceLROnPlateau
-import matplotlib.pyplot as plt
-from matplotlib.gridspec import GridSpec
-
 from data_generation.data_generator import DataGenerator
-from util.misc import save_checkpoint, update_logs
 from util.load_config_files import load_yaml_into_dotdict
-from util.plotting import compute_avg_certainty, get_constrastive_ax, get_false_ax, \
-    get_total_loss_ax, get_state_uncertainties_ax
-from util.logger import Logger
 from modules.loss import MotLoss
-from modules.contrastive_loss import ContrastiveLoss
-from modules import evaluator
+
 from modules.models.mt3v2.mt3v2 import MT3V2
 from util.misc import NestedTensor
 
 from matplotlib.patches import Ellipse
 
+
+
+# TODO: Create interface for user-generated measurement generation
+# TODO: Test specific scenario with different levels of measurement noise
+
+# TODO: Should I focus on object complexity or noise complexity? (or both..)
 
 
 
@@ -54,6 +48,9 @@ def clip_batch(tensor: NestedTensor, N: int, offset=0) -> NestedTensor:
 
     clipped_measurements = clip_measurements(measurements, N, offset)
     max_len = max(list(map(len, clipped_measurements)))
+
+    # if len(clipped_measurements[0]) == 0:
+    #     return None
 
     padded_window, mask = pad_to_batch_max(clipped_measurements, max_len)
     nested_tensor = NestedTensor(torch.Tensor(padded_window).to(torch.device(params.training.device)),
@@ -82,7 +79,6 @@ def clip_trajectories(trajectories, N, offset=0):
 
     return [clipped_trajectories]
 
-
 def get_xy_from_data(data):
     Xgt = []
     Ygt = []
@@ -106,7 +102,6 @@ def get_xy_from_rtheta(r: float, theta: float) -> Tuple[float, float]:
     y = r*np.sin(theta)
     return x, y
 
-
 def get_rtheta_from_data(data):
     r = []
     theta = []
@@ -116,28 +111,33 @@ def get_rtheta_from_data(data):
 
     return r, theta
 
-
-def plot_ground_truth(trajectories):
+def plot_ground_truth(trajectories, prior_lengths):
     cmap = plt.cm.get_cmap('nipy_spectral', len(trajectories[0])) 
 
+    posterior_lengths = prior_lengths
     for color_idx, (track_id, track) in enumerate(trajectories[0].items()):
         Xgt, Ygt = get_xy_from_data(track)
-    
-        for i in range(len(Xgt)):
-            if i == 0:
-                plt.plot(Xgt[i:i+2], Ygt[i:i+2], 'o-',c=cmap(color_idx), alpha = i/len(Xgt), label=f"Track #{track_id}")
-            else:
-                plt.plot(Xgt[i:i+2], Ygt[i:i+2], 'o-',c=cmap(color_idx), alpha = i/len(Xgt))
 
-        VXgt, VYgt = get_vxvy_from_data(track)
+        Xgt_size = posterior_lengths.get(track_id)
+        if (Xgt_size is None or Xgt_size <= len(Xgt)) and Xgt_size != -1: # Extremely hacky way to ensure that terminated tracks are not drawn
+            posterior_lengths[track_id] = len(Xgt)
+            for i in range(len(Xgt)):
+                if i == 0:
+                    plt.plot(Xgt[i:i+2], Ygt[i:i+2], 'o-',c=cmap(color_idx), alpha = i/len(Xgt), label=f"Track #{track_id}")
+                else:
+                    plt.plot(Xgt[i:i+2], Ygt[i:i+2], 'o-',c=cmap(color_idx), alpha = i/len(Xgt))
 
-        # Plot GT diamond and velocity arrow
-        # TODO: Do not plot latest GT for terminated tracks 
+            VXgt, VYgt = get_vxvy_from_data(track)
 
-        plt.plot(Xgt[-1], Ygt[-1], marker='D', color='g', markersize=5, label="Latest gt")
-        plt.arrow(Xgt[-1], Ygt[-1], VXgt[-1], VYgt[-1], color='g', head_width=0.2, length_includes_head=True)
+            # Plot GT diamond and velocity arrow
+            plt.arrow(Xgt[-1], Ygt[-1], VXgt[-1], VYgt[-1], color='g', head_width=0.2, length_includes_head=True)
+            plt.plot(Xgt[-1], Ygt[-1], marker='D', color='g', markersize=5, label="Latest gt")
 
-
+        else:
+            posterior_lengths[track_id] = -1
+        
+    return posterior_lengths
+        
 def plot_measurements(true_measurements, false_measurements):
     r, theta = get_rtheta_from_data(true_measurements[0])
     Xm, Ym = get_xy_from_rtheta(r, theta)
@@ -145,7 +145,7 @@ def plot_measurements(true_measurements, false_measurements):
 
     r, theta = get_rtheta_from_data(false_measurements[0])
     Xf, Yf = get_xy_from_rtheta(r, theta)
-    plt.scatter(Xf, Yf, c='k', marker='x', alpha = 0.1, label="false measurements")
+    plt.scatter(Xf, Yf, c='k', marker='x', alpha = 0.75, label="false measurements")
 
 def pad_to_batch_max(training_data, max_len):
     batch_size = len(training_data)
@@ -258,7 +258,12 @@ if __name__ == "__main__":
     eval_params.recursive_update(load_yaml_into_dotdict('configs/eval/default.yaml'))
     # Generate 32-bit random seed, or use user-specified one
     random_data = os.urandom(4)
-    params.general.pytorch_and_numpy_seed = int.from_bytes(random_data, byteorder="big") #2335718734
+
+
+
+    # 2015188077: Single crossing
+    # 1782001962: Chaos but good
+    params.general.pytorch_and_numpy_seed = 1465934958 #int.from_bytes(random_data, byteorder="big")
     print(f'Using seed: {params.general.pytorch_and_numpy_seed}')
 
     # Seed pytorch and numpy for reproducibility
@@ -271,11 +276,11 @@ if __name__ == "__main__":
     if eval_params.training.device == 'auto':
         eval_params.training.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-    params.data_generation.seed =  2015188077 #params.general.pytorch_and_numpy_seed #2335718734 #random.randint(0, 9999999999999999999) # Tune this to get different runs
+    params.data_generation.seed = params.general.pytorch_and_numpy_seed #2335718734 #random.randint(0, 9999999999999999999) # Tune this to get different runs
     do_plot_preds = True
     do_plot_ellipse = True
     do_plot_vel = True
-    do_plot_unmatched_hypotheses = False
+    do_plot_unmatched_hypotheses = True
 
     data_generator = DataGenerator(params)
     last_filename = "C:/Users/chris/MT3v2/task1/checkpoints/" + "checkpoint_gradient_step_999999"
@@ -290,45 +295,84 @@ if __name__ == "__main__":
     model.load_state_dict(checkpoint['model_state_dict'])
     model.to(torch.device(params.training.device))
 
-    mot_loss = MotLoss(params)
+    mot_loss = MotLoss(eval_params)
     mot_loss.to(params.training.device)
+    model.eval()
+    #mot_loss = MotLoss(eval_params)
 
-    # Calculate all values used for plotting
     params.data_generation.n_timesteps = prev
+    # Calculate all values used for plotting
+
     measurements, labels, unique_ids, _, trajectories, true_measurements, false_measurements = data_generator.get_batch()
     #print(trajectories)
     #print(labels)
 
-    plt.ion() # Required for dynamic plot updates
+    do_interactive = False
+    if not do_interactive:
+        plt.ion() # Required for dynamic plot updates
     fig, output_ax = plt.subplots() 
 
-    offset = 0
     N = 20
-    for offset in range(50):
+    prior_lengths = {}
+    offset = 0
+    gospa_total = []
+    gospa_loc = []
+    gospa_miss = []
+    gospa_false = []
+
+
+    def step_once(event):
+        global offset
+        global prior_lengths
+        global N
+        global gospa_total
+        global gospa_loc
+        global gospa_miss
+        global gospa_false
+
         # Clip all data to a sliding window
         clipped_trajectories = clip_trajectories(trajectories, N, offset)
         clipped_true_measurements = clip_measurements(true_measurements, N, offset)
         clipped_false_measurements = clip_measurements(false_measurements, N, offset)
         clipped_measurements = clip_batch(measurements, N, offset)
+        # if clipped_measurements is None:
+        #     return
 
         # Infer on each window
         #print(len(clipped_measurements.tensors[0]))
         prediction, intermediate_predictions, encoder_prediction, aux_classifications, _ = model.forward(clipped_measurements, offset)
+        #params.loss.type = "gospa"
         loss_dict, indices = mot_loss.forward(labels, prediction, intermediate_predictions, encoder_prediction, loss_type=params.loss.type)
         #print(f"{len(clipped_trajectories[0])}/{len(trajectories[0])}")
         
         # Plot results
         plot_measurements(clipped_true_measurements, clipped_false_measurements)
-        plot_ground_truth(clipped_trajectories)
+        prior_lengths = plot_ground_truth(clipped_trajectories, prior_lengths)
         output_truth_plot(output_ax, prediction, labels, indices, clipped_measurements, params)
 
+        prediction_in_format_for_loss = {'state': torch.cat((prediction.positions, prediction.velocities), dim=2),
+                                            'logits': prediction.logits,
+                                            'state_covariances': prediction.uncertainties ** 2}
+        loss, _, decomposition = mot_loss.compute_orig_gospa_matching(prediction_in_format_for_loss, labels,
+                                                                         eval_params.loss.existence_prob_cutoff)
+        gospa_total.append(loss.item())
+        gospa_loc.append(decomposition['localization'])
+        # gospa_norm_loc.append(decomposition['localization'] / decomposition['n_matched_objs'] if \
+        #     decomposition['n_matched_objs'] != 0 else 0.0)
+        gospa_miss.append(decomposition['missed'])
+        gospa_false.append(decomposition['false'])
 
-        output_ax.set_xlim([-2, 17]) 
-        output_ax.set_ylim([-10, 10]) 
+        output_ax.set_aspect('equal', 'box')
+        output_ax.set_ylabel('North')
+        output_ax.set_xlabel('East')
+        output_ax.grid('on')
+        output_ax.set_xlim([-10, 20]) 
+        output_ax.set_ylim([-15, 15]) 
         fig.canvas.draw()
         fig.canvas.flush_events()
         time.sleep(0.1)
         output_ax.clear()
+        offset += 1
 
     # Batch includes all MEASUREMENTS, and thus the window should gate measurements on their timestep, not the amount of measurements.
  
@@ -339,16 +383,32 @@ if __name__ == "__main__":
 
     # TODO: How to test for active hypotheses for each time step. I.e. is there a probability array that can be printed?
 
-    output_ax.set_ylabel('North')
-    output_ax.set_xlabel('East')
-    output_ax.grid('on')
-    #output_ax.set_aspect('equal', 'box')
 
-    leg = output_ax.legend()
-    for lh in leg.legendHandles: 
-        lh.set_alpha(1)
+    if do_interactive:
+        fig.canvas.mpl_connect('key_press_event', step_once)
+        leg = output_ax.legend()
+        for lh in leg.legendHandles: 
+            lh.set_alpha(1)
 
-    # Turn off interactive and keep plot open
-    plt.ioff()
-    plt.plot()
+        plt.show()
+    else:
+        for _ in range(100):
+            # TODO: Add pause function
+            
+            step_once(None)
 
+        # Turn off interactive and keep plot open
+        plt.ioff()
+        #plt.show()
+
+    total_gospa = np.array(gospa_total)
+    total_loc = np.array(gospa_loc)
+    total_miss = np.array(gospa_miss)
+    total_false = np.array(gospa_false)
+
+    import scipy.stats as st
+
+    print(f"GOSPA: {total_gospa.mean()} +/- {max(st.norm.interval(0.95, loc=0, scale=st.sem(total_gospa)))}")
+    print(f"LOC: {total_loc.mean()} +/- {max(st.norm.interval(0.95, loc=0, scale=st.sem(total_loc)))}")
+    print(f"MISS: {total_miss.mean()} +/- {max(st.norm.interval(0.95, loc=0, scale=st.sem(total_miss)))}")
+    print(f"FALSE: {total_false.mean()} +/- {max(st.norm.interval(0.95, loc=0, scale=st.sem(total_false)))}")

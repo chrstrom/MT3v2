@@ -18,7 +18,7 @@ class MT3V2(nn.Module):
         super().__init__()
         self.params = params
         self.d_detections = params.arch.d_detections
-        print(f"{params.data_generation.n_timesteps}, {params.arch.d_model}")
+        #print(f"{params.data_generation.n_timesteps}, {params.arch.d_model}")
         self.temporal_encoder = LearnedPositionEncoder(params.data_generation.n_timesteps, params.arch.d_model)
 
         # Normalization factor to make all measurement dimensions have similar standard deviations
