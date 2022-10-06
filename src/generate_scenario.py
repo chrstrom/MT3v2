@@ -28,7 +28,6 @@ from matplotlib.patches import Ellipse
 # TODO: Should I focus on object complexity or noise complexity? (or both..)
 
 
-
 def clip_measurements(measurements, N, offset=0):
     """
     Clip measurements on the form [r, rdot, theta, t] to the time step
@@ -56,7 +55,6 @@ def clip_batch(tensor: NestedTensor, N: int, offset=0) -> NestedTensor:
     nested_tensor = NestedTensor(torch.Tensor(padded_window).to(torch.device(params.training.device)),
                                  torch.Tensor(mask).bool().to(torch.device(params.training.device)))
     return nested_tensor
-
 
 def clip_trajectories(trajectories, N, offset=0):
     """
@@ -111,7 +109,7 @@ def get_rtheta_from_data(data):
 
     return r, theta
 
-def plot_ground_truth(trajectories, prior_lengths):
+def plot_ground_truth(trajectories, prior_lengths, n_historical_steps):
     cmap = plt.cm.get_cmap('nipy_spectral', len(trajectories[0])) 
 
     posterior_lengths = prior_lengths
@@ -119,13 +117,14 @@ def plot_ground_truth(trajectories, prior_lengths):
         Xgt, Ygt = get_xy_from_data(track)
 
         Xgt_size = posterior_lengths.get(track_id)
-        if (Xgt_size is None or Xgt_size <= len(Xgt)) and Xgt_size != -1: # Extremely hacky way to ensure that terminated tracks are not drawn
-            posterior_lengths[track_id] = len(Xgt)
-            for i in range(len(Xgt)):
+        if Xgt_size != Xgt[-1] and Xgt_size != -1: # Hack to ensure that only active tracks are drawn
+            posterior_lengths[track_id] = Xgt[-1]
+            n_hist = min(len(Xgt), n_historical_steps)
+            for i in range(n_hist):
                 if i == 0:
-                    plt.plot(Xgt[i:i+2], Ygt[i:i+2], 'o-',c=cmap(color_idx), alpha = i/len(Xgt), label=f"Track #{track_id}")
+                    plt.plot(Xgt[-i-3:-i-1], Ygt[-i-3:-i-1], 'o-', c=cmap(color_idx), alpha = 1 - i/n_hist, label=f"Track #{track_id}")
                 else:
-                    plt.plot(Xgt[i:i+2], Ygt[i:i+2], 'o-',c=cmap(color_idx), alpha = i/len(Xgt))
+                    plt.plot(Xgt[-i-3:-i-1], Ygt[-i-3:-i-1], 'o-', c=cmap(color_idx), alpha = 1 - i/n_hist)
 
             VXgt, VYgt = get_vxvy_from_data(track)
 
@@ -135,6 +134,16 @@ def plot_ground_truth(trajectories, prior_lengths):
 
         else:
             posterior_lengths[track_id] = -1
+
+        # n_hist = min(len(Xgt), n_historical_steps)
+        # for i in range(n_hist):
+        #     plt.plot(Xgt[-i-3:-i-1], Ygt[-i-3:-i-1], 'o-', c=cmap(color_idx), alpha = 1 - i/n_hist)
+
+        # VXgt, VYgt = get_vxvy_from_data(track)
+
+        # # Plot GT diamond and velocity arrow
+        # plt.arrow(Xgt[-1], Ygt[-1], VXgt[-1], VYgt[-1], color='g', head_width=0.2, length_includes_head=True)
+        # plt.plot(Xgt[-1], Ygt[-1], marker='D', color='g', markersize=5, label="Latest gt")
         
     return posterior_lengths
         
@@ -263,7 +272,8 @@ if __name__ == "__main__":
 
     # 2015188077: Single crossing
     # 1782001962: Chaos but good
-    params.general.pytorch_and_numpy_seed = 1465934958 #int.from_bytes(random_data, byteorder="big")
+    # 1465934958: Unmatched hypotheses in vertical direction
+    params.general.pytorch_and_numpy_seed = int.from_bytes(random_data, byteorder="big")
     print(f'Using seed: {params.general.pytorch_and_numpy_seed}')
 
     # Seed pytorch and numpy for reproducibility
@@ -312,7 +322,7 @@ if __name__ == "__main__":
         plt.ion() # Required for dynamic plot updates
     fig, output_ax = plt.subplots() 
 
-    N = 20
+    N = 20 # Track length to consider. This cannot be longer than 20 since the learned position encoding is fixed in size
     prior_lengths = {}
     offset = 0
     gospa_total = []
@@ -347,7 +357,7 @@ if __name__ == "__main__":
         
         # Plot results
         plot_measurements(clipped_true_measurements, clipped_false_measurements)
-        prior_lengths = plot_ground_truth(clipped_trajectories, prior_lengths)
+        prior_lengths = plot_ground_truth(clipped_trajectories, prior_lengths, 10)
         output_truth_plot(output_ax, prediction, labels, indices, clipped_measurements, params)
 
         prediction_in_format_for_loss = {'state': torch.cat((prediction.positions, prediction.velocities), dim=2),
