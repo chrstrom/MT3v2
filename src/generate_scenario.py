@@ -191,8 +191,9 @@ def output_truth_plot(ax, prediction, labels, matched_idx, batch, params):
         raise NotImplementedError('Plotting not working yet for shape predictions.')
 
     # Get ground-truth, predicted state, and logits for chosen training example
+    print(matched_idx)
     truth = labels[0].cpu().numpy()
-    indices = tuple([t.cpu().detach().numpy() for t in matched_idx[0]])
+    indices = matched_idx[0] #tuple([t.cpu().detach().numpy() for t in matched_idx[0]])
     if params.data_generation.prediction_target == 'position':
         out = prediction.positions[0].cpu().detach().numpy()
     elif params.data_generation.prediction_target == 'position_and_velocity':
@@ -213,6 +214,8 @@ def output_truth_plot(ax, prediction, labels, matched_idx, batch, params):
         pos_y = posvel[1]
         vel_x = posvel[2]
         vel_y = posvel[3]
+
+        
 
         if i in indices[0]:
             if do_plot_preds:
@@ -273,7 +276,7 @@ if __name__ == "__main__":
     # 2015188077: Single crossing
     # 1782001962: Chaos but good
     # 1465934958: Unmatched hypotheses in vertical direction
-    params.general.pytorch_and_numpy_seed = int.from_bytes(random_data, byteorder="big")
+    params.general.pytorch_and_numpy_seed = 1261187305 #int.from_bytes(random_data, byteorder="big")
     print(f'Using seed: {params.general.pytorch_and_numpy_seed}')
 
     # Seed pytorch and numpy for reproducibility
@@ -314,6 +317,7 @@ if __name__ == "__main__":
     # Calculate all values used for plotting
 
     measurements, labels, unique_ids, _, trajectories, true_measurements, false_measurements = data_generator.get_batch()
+    print(labels)
     #print(trajectories)
     #print(labels)
 
@@ -352,19 +356,29 @@ if __name__ == "__main__":
         #print(len(clipped_measurements.tensors[0]))
         prediction, intermediate_predictions, encoder_prediction, aux_classifications, _ = model.forward(clipped_measurements, offset)
         #params.loss.type = "gospa"
-        loss_dict, indices = mot_loss.forward(labels, prediction, intermediate_predictions, encoder_prediction, loss_type=params.loss.type)
-        #print(f"{len(clipped_trajectories[0])}/{len(trajectories[0])}")
-        
+        print(trajectories)
+
+# TODO: LABELS MUST BE UPDATED FOR EVERY TIME STEP
+#       Labels take the form of 
+#[tensor([[x1, y1, vx1, vy1],
+#              ...
+#        [ xn, yn, vxn, vyn]])]
+# For all ground truth objects AT THE CURRENT TIME STEP
+
+# TODO: Make the offset a timestamp and use that to extract data
+# Ex: "all gt targets at the current time step"
+
+        prediction_in_format_for_loss = {'state': torch.cat((prediction.positions, prediction.velocities), dim=2),
+                                            'logits': prediction.logits,
+                                            'state_covariances': prediction.uncertainties ** 2}
+        loss, indices, decomposition = mot_loss.compute_orig_gospa_matching(prediction_in_format_for_loss, labels, existence_threshold=0.0)
+
+
         # Plot results
         plot_measurements(clipped_true_measurements, clipped_false_measurements)
         prior_lengths = plot_ground_truth(clipped_trajectories, prior_lengths, 10)
         output_truth_plot(output_ax, prediction, labels, indices, clipped_measurements, params)
 
-        prediction_in_format_for_loss = {'state': torch.cat((prediction.positions, prediction.velocities), dim=2),
-                                            'logits': prediction.logits,
-                                            'state_covariances': prediction.uncertainties ** 2}
-        loss, _, decomposition = mot_loss.compute_orig_gospa_matching(prediction_in_format_for_loss, labels,
-                                                                         eval_params.loss.existence_prob_cutoff)
         gospa_total.append(loss.item())
         gospa_loc.append(decomposition['localization'])
         # gospa_norm_loc.append(decomposition['localization'] / decomposition['n_matched_objs'] if \
@@ -376,7 +390,7 @@ if __name__ == "__main__":
         output_ax.set_ylabel('North')
         output_ax.set_xlabel('East')
         output_ax.grid('on')
-        output_ax.set_xlim([-10, 20]) 
+        output_ax.set_xlim([-15, 15]) 
         output_ax.set_ylim([-15, 15]) 
         fig.canvas.draw()
         fig.canvas.flush_events()
@@ -402,10 +416,11 @@ if __name__ == "__main__":
 
         plt.show()
     else:
-        for _ in range(100):
+        for _ in range(30):
             # TODO: Add pause function
             
             step_once(None)
+            time.sleep(0.5)
 
         # Turn off interactive and keep plot open
         plt.ioff()
