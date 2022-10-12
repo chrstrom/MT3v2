@@ -1,3 +1,4 @@
+from doctest import set_unittest_reportflags
 import multiprocessing
 
 import numpy as np
@@ -41,6 +42,12 @@ class DataGenerator:
         self.datagens = [MotDataGenerator(params, rng=rng) for rng in rngs]
 
     def get_batch(self):
+        """
+        This is the function that is called which returns measurements and gt
+
+        The manually constructed trajectories should replace the "results" variable,
+        which means that the "get_single_training_example" must be altered.
+        """
         if len(self.datagens) != 1:
             results = self.pool.starmap(get_single_training_example, zip(self.datagens, [self.n_timesteps]*len(self.datagens)))
         else:
@@ -98,6 +105,24 @@ def get_single_training_example(data_generator, n_timesteps):
     Returns:
         training_data   : A single training example
         label_data       : Ground truth for example
+    """
+
+    """
+    This code should be replaced to instead use the manually defined targets.
+
+    Targets, timestamps and GT states can be defined in a .csv or the likes
+
+    True measurements should then be generated according to the measurement model
+    (see data_generator)
+
+    False measurements should also be generated according to task parameters
+    (also see data_generator)
+
+    The rest of the values required in the output should also be generated
+    according to data_generator.
+
+    It could be an idea to instead just edit the data_generator code? I.e. any
+    step becomes a step forward in the .csv containing the trajectories etc.
     """
 
     data_generator.reset()
