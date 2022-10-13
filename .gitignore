@@ -1,6 +1,7 @@
 # Ignore results files
 src/results/*
 src/results.nosync/*
+task[1-4]*/*
 
 # Ignore .idea folders
 .idea/*
