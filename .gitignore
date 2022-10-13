@@ -2,6 +2,7 @@
 src/results/*
 src/results.nosync/*
 task[1-4]*/*
+*.npy
 
 # Ignore .idea folders
 .idea/*
