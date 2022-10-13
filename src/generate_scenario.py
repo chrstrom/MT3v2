@@ -113,6 +113,7 @@ def plot_ground_truth(trajectories, prior_lengths, n_historical_steps):
     cmap = plt.cm.get_cmap('nipy_spectral', len(trajectories[0])) 
 
     posterior_lengths = prior_lengths
+    # TODO: Check if the current track has the current timestamp in it. If not, do not plot
     for color_idx, (track_id, track) in enumerate(trajectories[0].items()):
         Xgt, Ygt = get_xy_from_data(track)
 
@@ -178,7 +179,7 @@ def sliding_window(tensor: NestedTensor, offset:int, window_size=20) -> NestedTe
     return nested_tensor
 
 @torch.no_grad()
-def output_truth_plot(ax, prediction, labels, matched_idx, batch, params):
+def output_truth_plot(ax, prediction, labels, indices, batch, params):
 
     assert hasattr(prediction, 'positions'), 'Positions should have been predicted for plotting.'
     assert hasattr(prediction, 'logits'), 'Logits should have been predicted for plotting.'
@@ -191,9 +192,10 @@ def output_truth_plot(ax, prediction, labels, matched_idx, batch, params):
         raise NotImplementedError('Plotting not working yet for shape predictions.')
 
     # Get ground-truth, predicted state, and logits for chosen training example
-    print(matched_idx)
+    #print(matched_idx)
     truth = labels[0].cpu().numpy()
-    indices = matched_idx[0] #tuple([t.cpu().detach().numpy() for t in matched_idx[0]])
+    #indices = matched_idx[0] #tuple([t.cpu().detach().numpy() for t in matched_idx[0]])
+
     if params.data_generation.prediction_target == 'position':
         out = prediction.positions[0].cpu().detach().numpy()
     elif params.data_generation.prediction_target == 'position_and_velocity':
@@ -217,7 +219,7 @@ def output_truth_plot(ax, prediction, labels, matched_idx, batch, params):
 
         
 
-        if i in indices[0]:
+        if i in indices:
             if do_plot_preds:
                 if once:
                     p = ax.plot(pos_x, pos_y, marker='o', color='r', markersize=5, label="Latest pred")
@@ -252,6 +254,88 @@ def output_truth_plot(ax, prediction, labels, matched_idx, batch, params):
                     ax.arrow(pos_x, pos_y, vel_x, vel_y, color='k', head_width=0.2, linestyle='--', length_includes_head=True)
 
 
+def step_once(event):
+    global timestep
+    global prior_lengths
+    global N
+    global K
+    global M
+    global gospa_total
+    global gospa_loc
+    global gospa_miss
+    global gospa_false
+
+    # Clip all data to a sliding window
+    clipped_trajectories = clip_trajectories(trajectories, N, timestep)
+    clipped_measurements = clip_batch(measurements, N, timestep)
+
+    prediction, intermediate_predictions, encoder_prediction, aux_classifications, _ = model.forward(clipped_measurements, timestep)
+    output_existence_probabilities = prediction.logits.sigmoid().detach().cpu().numpy().flatten()
+
+    existence_threshold = 0.75 # Hyperparameter
+    alive_indices = np.where(output_existence_probabilities > existence_threshold)[0]
+
+    # Plot results
+    clipped_true_measurements = clip_measurements(true_measurements, M, timestep + N - M + 1)
+    clipped_false_measurements = clip_measurements(false_measurements, M, timestep + N - M + 1)
+
+    plot_measurements(clipped_true_measurements, clipped_false_measurements)
+    prior_lengths = plot_ground_truth(clipped_trajectories, prior_lengths, 10)
+    output_truth_plot(output_ax, prediction, labels, alive_indices, clipped_measurements, params)
+
+    # prediction_in_format_for_loss = {'state': torch.cat((prediction.positions, prediction.velocities), dim=2),
+    #                                     'logits': prediction.logits,
+    #                                     'state_covariances': prediction.uncertainties ** 2}
+    # loss, indices, decomposition = mot_loss.compute_orig_gospa_matching(prediction_in_format_for_loss, labels, existence_threshold=0.0)
+
+    # gospa_total.append(loss.item())
+    # gospa_loc.append(decomposition['localization'])
+    # # gospa_norm_loc.append(decomposition['localization'] / decomposition['n_matched_objs'] if \
+    # #     decomposition['n_matched_objs'] != 0 else 0.0)
+    # gospa_miss.append(decomposition['missed'])
+    # gospa_false.append(decomposition['false'])
+
+    output_ax.set_aspect('equal', 'box')
+    output_ax.set_ylabel('North')
+    output_ax.set_xlabel('East')
+    output_ax.grid('on')
+    output_ax.set_xlim([-10, 20]) 
+    output_ax.set_ylim([-15, 15]) 
+
+    fig.canvas.draw()
+    fig.canvas.flush_events()
+    time.sleep(0.1)
+    output_ax.clear()
+    timestep += 1
+
+
+def update_labels(trajectories, timestep):
+    dt = 0.1
+    t = timestep * dt
+    
+    # TODO: LABELS MUST BE UPDATED FOR EVERY TIME STEP
+    #       Labels take the form of 
+    #[tensor([[x1, y1, vx1, vy1],
+    #              ...
+    #        [ xn, yn, vxn, vyn]])]
+    # For all ground truth objects AT THE CURRENT TIME STEP (1.9s )
+
+    # Q: Can the labels be circumvented by simply plotting all predictions with a certain existence probability?
+    # A: Yes! but..
+        # Current plotting just takes all measurements above a certain existence threshold and 
+        # displays them. However, GOSPA depends on labels, and to assess performance, the labels
+        # need to be updated.
+
+
+
+
+
+
+
+
+
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('-tp', '--task_params', help='filepath to configuration yaml file defining the task', required=True)
@@ -275,8 +359,9 @@ if __name__ == "__main__":
 
     # 2015188077: Single crossing
     # 1782001962: Chaos but good
-    # 1465934958: Unmatched hypotheses in vertical direction
-    params.general.pytorch_and_numpy_seed = 1261187305 #int.from_bytes(random_data, byteorder="big")
+    # 1261187305: Performance in the horizontal direction
+    
+    params.general.pytorch_and_numpy_seed = 1798125999 #int.from_bytes(random_data, byteorder="big")
     print(f'Using seed: {params.general.pytorch_and_numpy_seed}')
 
     # Seed pytorch and numpy for reproducibility
@@ -326,77 +411,16 @@ if __name__ == "__main__":
         plt.ion() # Required for dynamic plot updates
     fig, output_ax = plt.subplots() 
 
+    K = 10 # amount of gt in the past to plot.
     N = 20 # Track length to consider. This cannot be longer than 20 since the learned position encoding is fixed in size
+    M = 1 # amount of measurements in the past to plot.
+
     prior_lengths = {}
-    offset = 0
+    timestep = 0
     gospa_total = []
     gospa_loc = []
     gospa_miss = []
     gospa_false = []
-
-
-    def step_once(event):
-        global offset
-        global prior_lengths
-        global N
-        global gospa_total
-        global gospa_loc
-        global gospa_miss
-        global gospa_false
-
-        # Clip all data to a sliding window
-        clipped_trajectories = clip_trajectories(trajectories, N, offset)
-        clipped_true_measurements = clip_measurements(true_measurements, N, offset)
-        clipped_false_measurements = clip_measurements(false_measurements, N, offset)
-        clipped_measurements = clip_batch(measurements, N, offset)
-        # if clipped_measurements is None:
-        #     return
-
-        # Infer on each window
-        #print(len(clipped_measurements.tensors[0]))
-        prediction, intermediate_predictions, encoder_prediction, aux_classifications, _ = model.forward(clipped_measurements, offset)
-        #params.loss.type = "gospa"
-        print(trajectories)
-
-# TODO: LABELS MUST BE UPDATED FOR EVERY TIME STEP
-#       Labels take the form of 
-#[tensor([[x1, y1, vx1, vy1],
-#              ...
-#        [ xn, yn, vxn, vyn]])]
-# For all ground truth objects AT THE CURRENT TIME STEP
-
-# TODO: Make the offset a timestamp and use that to extract data
-# Ex: "all gt targets at the current time step"
-
-        prediction_in_format_for_loss = {'state': torch.cat((prediction.positions, prediction.velocities), dim=2),
-                                            'logits': prediction.logits,
-                                            'state_covariances': prediction.uncertainties ** 2}
-        loss, indices, decomposition = mot_loss.compute_orig_gospa_matching(prediction_in_format_for_loss, labels, existence_threshold=0.0)
-
-
-        # Plot results
-        plot_measurements(clipped_true_measurements, clipped_false_measurements)
-        prior_lengths = plot_ground_truth(clipped_trajectories, prior_lengths, 10)
-        output_truth_plot(output_ax, prediction, labels, indices, clipped_measurements, params)
-
-        gospa_total.append(loss.item())
-        gospa_loc.append(decomposition['localization'])
-        # gospa_norm_loc.append(decomposition['localization'] / decomposition['n_matched_objs'] if \
-        #     decomposition['n_matched_objs'] != 0 else 0.0)
-        gospa_miss.append(decomposition['missed'])
-        gospa_false.append(decomposition['false'])
-
-        output_ax.set_aspect('equal', 'box')
-        output_ax.set_ylabel('North')
-        output_ax.set_xlabel('East')
-        output_ax.grid('on')
-        output_ax.set_xlim([-15, 15]) 
-        output_ax.set_ylim([-15, 15]) 
-        fig.canvas.draw()
-        fig.canvas.flush_events()
-        time.sleep(0.1)
-        output_ax.clear()
-        offset += 1
 
     # Batch includes all MEASUREMENTS, and thus the window should gate measurements on their timestep, not the amount of measurements.
  
@@ -409,12 +433,15 @@ if __name__ == "__main__":
 
 
     if do_interactive:
-        fig.canvas.mpl_connect('key_press_event', step_once)
-        leg = output_ax.legend()
-        for lh in leg.legendHandles: 
-            lh.set_alpha(1)
+        try:
+            fig.canvas.mpl_connect('key_press_event', step_once)
+            leg = output_ax.legend()
+            for lh in leg.legendHandles: 
+                lh.set_alpha(1)
 
-        plt.show()
+            plt.show()
+        except RuntimeError as e:
+            exit()
     else:
         for _ in range(30):
             # TODO: Add pause function
@@ -426,14 +453,14 @@ if __name__ == "__main__":
         plt.ioff()
         #plt.show()
 
-    total_gospa = np.array(gospa_total)
-    total_loc = np.array(gospa_loc)
-    total_miss = np.array(gospa_miss)
-    total_false = np.array(gospa_false)
+    # total_gospa = np.array(gospa_total)
+    # total_loc = np.array(gospa_loc)
+    # total_miss = np.array(gospa_miss)
+    # total_false = np.array(gospa_false)
 
-    import scipy.stats as st
+    # import scipy.stats as st
 
-    print(f"GOSPA: {total_gospa.mean()} +/- {max(st.norm.interval(0.95, loc=0, scale=st.sem(total_gospa)))}")
-    print(f"LOC: {total_loc.mean()} +/- {max(st.norm.interval(0.95, loc=0, scale=st.sem(total_loc)))}")
-    print(f"MISS: {total_miss.mean()} +/- {max(st.norm.interval(0.95, loc=0, scale=st.sem(total_miss)))}")
-    print(f"FALSE: {total_false.mean()} +/- {max(st.norm.interval(0.95, loc=0, scale=st.sem(total_false)))}")
+    # print(f"GOSPA: {total_gospa.mean()} +/- {max(st.norm.interval(0.95, loc=0, scale=st.sem(total_gospa)))}")
+    # print(f"LOC: {total_loc.mean()} +/- {max(st.norm.interval(0.95, loc=0, scale=st.sem(total_loc)))}")
+    # print(f"MISS: {total_miss.mean()} +/- {max(st.norm.interval(0.95, loc=0, scale=st.sem(total_miss)))}")
+    # print(f"FALSE: {total_false.mean()} +/- {max(st.norm.interval(0.95, loc=0, scale=st.sem(total_false)))}")
