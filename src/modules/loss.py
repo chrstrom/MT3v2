@@ -164,63 +164,75 @@ class MotLoss(nn.Module):
                          'n_matched_objs': permutation_length}
         return loss, indices, decomposition
 
-    def compute_orig_gospa_matching_with_uncertainties(self, predictions, targets, existence_threshold):
+    def compute_prob_gospa_matching(self, outputs, targets):
+        """ Performs the matching
+        Params:
+            outputs: dictionary with 'state' and 'logits'
+                state: Tensor of dim [batch_size, num_queries, d_label]
+                logits: Tensor of dim [batch_size, num_queries, number_of_classes]
+            targets: This is a list of targets (len(targets) = batch_size), where each target is a
+                    tensor of dim [num_objects, d_label] (where num_objects is the number of ground-truth
+                    objects in the target)
+        Returns:
+            A list of size batch_size, containing tuples of (index_i, index_j) where:
+                - index_i is the indices of the selected predictions (in order)
+                - index_j is the indices of the corresponding selected targets (in order)
+            For each batch element, it holds:
+                len(index_i) = len(index_j) = min(num_queries, num_target_boxes)
+        """
 
-        assert self.order == 1, 'This code does not work for loss.order != 1'
-        assert self.alpha == 2, 'The permutation -> assignment relation used to decompose GOSPA might require that loss.alpha == 2'
+        output_state = outputs['state']
+        output_logits = outputs['logits'].sigmoid()
 
-        batch_size, _, dim_predictions = predictions['state'].shape
-        n_targets, dim_targets = targets[0].shape
-        assert dim_predictions == dim_targets
-        assert batch_size == 1, 'GOSPA matching with uncertainties currently only works with batch size = 1'
+        bs, num_queries = output_state.shape[:2]
 
-        existence_probabilities = predictions['logits'][0].sigmoid().detach()
-        alive_idx = existence_probabilities.squeeze(-1) > existence_threshold
+        # We flatten to compute the cost matrices in a batch
+        # [batch_size * num_queries, d_label]
+        out = output_state.flatten(0, 1)
+        probs = output_logits.flatten(0, 1)
+        # Also concat the target labels
+        # [sum(num_objects), d_labels]
+        tgt = torch.cat(targets)
 
-        predicted_distributions = {'states': predictions['state'][0, alive_idx].detach(),
-                                   'state_covariances': predictions['state_covariances'][0, alive_idx].detach()}
-        targets = targets[0]
-        n_predictions = len(predicted_distributions['states'])
+        # Compute the L2 cost
+        # [batch_size * num_queries, sum(num_objects)]
+        assert probs.shape[0] == bs * num_queries
+        assert probs.shape[1] == 1
+        dist = torch.cdist(out, tgt, p=2)
+        dist = dist.clamp_max(self.cutoff_distance)
 
-        loss = torch.zeros(size=(1,))
-        localization_cost = 0
-        missed_target_cost = 0
-        false_target_cost = 0
-        indices = []
-        permutation_length = 0
+        cost = torch.pow(input=dist, exponent=self.order) * probs
+        cost += (1-probs) * (self.miss_cost) / 2.0
 
-        if n_targets == 0:
-            indices.append(([], []))
-            loss += torch.Tensor([self.miss_cost / self.alpha * n_predictions])
-            false_target_cost = self.miss_cost / self.alpha * n_predictions
-        elif n_predictions == 0:
-            indices.append(([], []))
-            loss += torch.Tensor([self.miss_cost / self.alpha * n_targets])
-            missed_target_cost = self.miss_cost / self.alpha * n_targets
-        else:
-            dist = compute_pairwise_crossentropy(predicted_distributions, targets)
-            dist = dist.clamp_max(self.cutoff_distance)
-            c = torch.pow(input=dist, exponent=self.order)
-            c = c.cpu()
-            target_idx, output_idx = linear_sum_assignment(c)
-            indices.append((target_idx, output_idx))
+        assert cost.shape[0] == bs * num_queries
+        assert cost.shape[1] == tgt.shape[0]
 
-            for t, o in zip(target_idx, output_idx):
-                loss += c[t, o]
-                if c[t, o] < self.cutoff_distance:
-                    localization_cost += c[t, o].item()
-                    permutation_length += 1
+        # Clamp according to GOSPA
+        # cost = cost.clamp_max(self.miss_cost)
 
-            cardinality_error = abs(n_predictions - n_targets)
-            loss += self.miss_cost / self.alpha * cardinality_error
+        # Reshape
+        # [batch_size, num_queries, sum(num_objects)]
+        #cost = cost.view(bs, num_queries, -1)
+        cost = cost.view(bs, num_queries, -1).cpu()
 
-            missed_target_cost += (n_targets - permutation_length) * (self.miss_cost / self.alpha)
-            false_target_cost += (n_predictions - permutation_length) * (self.miss_cost / self.alpha)
+        # List with num_objects for each training-example
+        sizes = [len(v) for v in targets]
 
-        decomposition = {'localization': localization_cost, 'missed': missed_target_cost, 'false': false_target_cost,
-                         'n_matched_objs': permutation_length}
-        return loss, indices, decomposition
+        # Perform hungarian matching using scipy linear_sum_assignment
+        with torch.no_grad():
+            cost_split = cost.split(sizes, -1)
+            indices = [linear_sum_assignment(c[i]) for i, c in enumerate(cost_split)]
+            
+            permutation_idx = []
+            unmatched_x = []
+            for i, perm_idx in enumerate(indices):
+                pred_idx, ground_truth_idx = perm_idx
+                pred_unmatched = list(set(i for i in range(num_queries)) - set(pred_idx))
 
+                permutation_idx.append((torch.as_tensor(pred_idx, dtype=torch.int64).to(self.device), torch.as_tensor(ground_truth_idx, dtype=torch.int64)))
+                unmatched_x.append(torch.as_tensor(pred_unmatched, dtype=torch.int64).to(self.device))
+               
+        return permutation_idx, cost.to(self.device), unmatched_x
     def gospa_forward(self, outputs, targets, probabilistic=True, existence_threshold=0.75):
 
         assert 'state' in outputs, "'state' should be in dict"

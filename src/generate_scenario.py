@@ -130,8 +130,10 @@ def plot_ground_truth(trajectories, prior_lengths, n_historical_steps):
             VXgt, VYgt = get_vxvy_from_data(track)
 
             # Plot GT diamond and velocity arrow
-            plt.arrow(Xgt[-1], Ygt[-1], VXgt[-1], VYgt[-1], color='g', head_width=0.2, length_includes_head=True)
             plt.plot(Xgt[-1], Ygt[-1], marker='D', color='g', markersize=5, label="Latest gt")
+            if do_plot_vel:
+                plt.arrow(Xgt[-1], Ygt[-1], VXgt[-1], VYgt[-1], color='g', head_width=0.2, length_includes_head=True)
+
 
         else:
             posterior_lengths[track_id] = -1
@@ -194,7 +196,7 @@ def output_truth_plot(ax, prediction, labels, indices, batch, params):
     # Get ground-truth, predicted state, and logits for chosen training example
     #print(matched_idx)
     truth = labels[0].cpu().numpy()
-    #indices = matched_idx[0] #tuple([t.cpu().detach().numpy() for t in matched_idx[0]])
+    #indices = tuple([t.cpu().detach().numpy() for t in matched_idx[0]])
 
     if params.data_generation.prediction_target == 'position':
         out = prediction.positions[0].cpu().detach().numpy()
@@ -217,8 +219,6 @@ def output_truth_plot(ax, prediction, labels, indices, batch, params):
         vel_x = posvel[2]
         vel_y = posvel[3]
 
-        
-
         if i in indices:
             if do_plot_preds:
                 if once:
@@ -238,10 +238,15 @@ def output_truth_plot(ax, prediction, labels, indices, batch, params):
             if uncertainties is not None and do_plot_ellipse:
                 ell_position = Ellipse(xy=(pos_x, pos_y), width=uncertainties[i, 0]*4, height=uncertainties[i, 1]*4,
                                     color=color, alpha=0.4)
-                ell_velocity = Ellipse(xy=(pos_x + vel_x, pos_y + vel_y), width=uncertainties[i, 2]*4,
-                                    height=uncertainties[i, 3]*4, edgecolor=color, linestyle='--', facecolor='none')
+
                 ax.add_patch(ell_position)
-                ax.add_patch(ell_velocity)
+                if do_plot_vel:
+                    ell_velocity = Ellipse(xy=(pos_x + vel_x, pos_y + vel_y), width=uncertainties[i, 2]*4,
+                                        height=uncertainties[i, 3]*4, edgecolor=color, linestyle='--', facecolor='none')
+                    ax.add_patch(ell_velocity)
+
+
+
         else:
             if do_plot_unmatched_hypotheses:
                 if once:
@@ -271,9 +276,15 @@ def step_once(event):
 
     prediction, intermediate_predictions, encoder_prediction, aux_classifications, _ = model.forward(clipped_measurements, timestep)
     output_existence_probabilities = prediction.logits.sigmoid().detach().cpu().numpy().flatten()
-
-    existence_threshold = 0.75 # Hyperparameter
+    #print(output_existence_probabilities)
+    existence_threshold = 0.90 # Hyperparameter
     alive_indices = np.where(output_existence_probabilities > existence_threshold)[0]
+    #prediction_in_format_for_loss = {'state': torch.cat((prediction.positions, prediction.velocities), dim=2),
+    #                                    'logits': prediction.logits,
+    #                                    'state_covariances': prediction.uncertainties ** 2}
+    #loss, alive_indices, decomposition = mot_loss.gospa_forward(prediction_in_format_for_loss, labels, probabilistic=False)
+    #loss, alive_indices = mot_loss.gospa_forward(prediction_in_format_for_loss, labels, probabilistic=True)
+
 
     # Plot results
     clipped_true_measurements = clip_measurements(true_measurements, M, timestep + N - M + 1)
@@ -282,11 +293,6 @@ def step_once(event):
     plot_measurements(clipped_true_measurements, clipped_false_measurements)
     prior_lengths = plot_ground_truth(clipped_trajectories, prior_lengths, 10)
     output_truth_plot(output_ax, prediction, labels, alive_indices, clipped_measurements, params)
-
-    # prediction_in_format_for_loss = {'state': torch.cat((prediction.positions, prediction.velocities), dim=2),
-    #                                     'logits': prediction.logits,
-    #                                     'state_covariances': prediction.uncertainties ** 2}
-    # loss, indices, decomposition = mot_loss.compute_orig_gospa_matching(prediction_in_format_for_loss, labels, existence_threshold=0.0)
 
     # gospa_total.append(loss.item())
     # gospa_loc.append(decomposition['localization'])
@@ -326,16 +332,6 @@ def update_labels(trajectories, timestep):
         # displays them. However, GOSPA depends on labels, and to assess performance, the labels
         # need to be updated.
 
-
-
-
-
-
-
-
-
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('-tp', '--task_params', help='filepath to configuration yaml file defining the task', required=True)
@@ -354,14 +350,13 @@ if __name__ == "__main__":
     eval_params.recursive_update(load_yaml_into_dotdict('configs/eval/default.yaml'))
     # Generate 32-bit random seed, or use user-specified one
     random_data = os.urandom(4)
-
-
-
+    
     # 2015188077: Single crossing
     # 1782001962: Chaos but good
     # 1261187305: Performance in the horizontal direction
+    # 1798125999
     
-    params.general.pytorch_and_numpy_seed = 1798125999 #int.from_bytes(random_data, byteorder="big")
+    params.general.pytorch_and_numpy_seed = int.from_bytes(random_data, byteorder="big")
     print(f'Using seed: {params.general.pytorch_and_numpy_seed}')
 
     # Seed pytorch and numpy for reproducibility
@@ -375,10 +370,6 @@ if __name__ == "__main__":
         eval_params.training.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     params.data_generation.seed = params.general.pytorch_and_numpy_seed #2335718734 #random.randint(0, 9999999999999999999) # Tune this to get different runs
-    do_plot_preds = True
-    do_plot_ellipse = True
-    do_plot_vel = True
-    do_plot_unmatched_hypotheses = True
 
     data_generator = DataGenerator(params)
     last_filename = "C:/Users/chris/MT3v2/task1/checkpoints/" + "checkpoint_gradient_step_999999"
@@ -402,18 +393,21 @@ if __name__ == "__main__":
     # Calculate all values used for plotting
 
     measurements, labels, unique_ids, _, trajectories, true_measurements, false_measurements = data_generator.get_batch()
-    print(labels)
-    #print(trajectories)
-    #print(labels)
+    print(measurements)
 
-    do_interactive = False
+    do_plot_preds = True
+    do_plot_ellipse = True
+    do_plot_vel = False
+    do_plot_unmatched_hypotheses = True
+    do_interactive = True
+
     if not do_interactive:
         plt.ion() # Required for dynamic plot updates
     fig, output_ax = plt.subplots() 
 
     K = 10 # amount of gt in the past to plot.
     N = 20 # Track length to consider. This cannot be longer than 20 since the learned position encoding is fixed in size
-    M = 1 # amount of measurements in the past to plot.
+    M = 3 # amount of measurements in the past to plot.
 
     prior_lengths = {}
     timestep = 0
@@ -447,7 +441,7 @@ if __name__ == "__main__":
             # TODO: Add pause function
             
             step_once(None)
-            time.sleep(0.5)
+            time.sleep(0.1)
 
         # Turn off interactive and keep plot open
         plt.ioff()
