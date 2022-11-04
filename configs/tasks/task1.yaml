@@ -5,13 +5,13 @@ data_generation:
     n_prediction_lag: 0 # 0 means predicting the last state and n_timesteps means predicting the first state
     dt: 0.1
     p_add:        0.5
-    p_remove:     0.005
+    p_remove:     0.1
     p_meas:       0.95
     process_noise_variance: 0.2
     measurement_noise_stds: [0.075, 0.977866322, 0.1]  # from resolution values of realistic model in good region of FOV
     n_avg_false_measurements : 5
-    n_avg_starting_objects: 10
-    avg_gt_objects: 10 # based on 1k samples
+    n_avg_starting_objects: 2.5
+    avg_gt_objects: 2 # based on 1k samples
     field_of_view:
         min_range: 0.5
         max_range: 15

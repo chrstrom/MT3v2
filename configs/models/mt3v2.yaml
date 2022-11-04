@@ -3,7 +3,7 @@ general:
 
 arch:
     type: 'ddetr_v2'
-    num_queries: 16
+    num_queries: 16 # limitation: it always produces 16 queries. What if there is 17?!
     d_model: 256
     d_detections: 3
     encoder:
