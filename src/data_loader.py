@@ -1,8 +1,14 @@
 """
-    TODO: Recreate the Mahler N crossing target scenario, found in the paper
-          https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=5744132.
+TODO: Recreate the Mahler N crossing target scenario, found in the paper
+        https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=5744132.
 
-    TODO: Create loader for the 9 ravens scenario from Brekke
+TODO: Create loader for the 9 ravens scenario from Brekke
+
+For scenario generation: Create a linear function for each track, then sample along the track.
+Use constant velocity for all objects. Different velocities, but such that they all meet at the center
+Use the same center as the spawning region in the original data generator.
+
+Run predictions using the parameters from all tasks.
 """
 
 import argparse
