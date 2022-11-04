@@ -1,24 +1,19 @@
 """
-    TODO: Drop true measurements using PD
-    TODO: Assemble pytorch tensor on the same format
+    TODO: Recreate the Mahler N crossing target scenario, found in the paper
+          https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=5744132.
 
-
-    TODO:
-    Scenario creation:
-
-        1: Recreate the Mahler N crossing target scenario, found in the paper
-        https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=5744132.
-
-        2: Load the 9 ravens scenario from Brekke
+    TODO: Create loader for the 9 ravens scenario from Brekke
 """
 
 import argparse
 import random
+import torch
 
 import numpy as np
 import pandas as pd
 
 from util.load_config_files import load_yaml_into_dotdict
+
 
 
 def measurement_from_gt(ground_truth, add_noise = False, params = None):
@@ -110,6 +105,24 @@ def generate_measurement_set(true_measurements, false_measurements, steps_max, p
     return measurements
 
 
+def tensor_from_measurements(measurements, steps_max):
+    """
+    Take measurements and match the MT3v2 input format
+    """
+
+    tensor_out = torch.tensor([])
+
+    for step in range(steps_max):
+        measurements_at_step = measurements[step]
+        for measurement in measurements_at_step:
+                tensor_out = torch.cat((tensor_out, torch.tensor([measurement])))
+
+    
+    tensor_out = tensor_out[None, :, :] # Add dummy dimension to adhere to MT3v2
+    return tensor_out
+
+
+
 if __name__ == "__main__":
     
     parser = argparse.ArgumentParser()
@@ -129,3 +142,6 @@ if __name__ == "__main__":
     false_measurements = generate_false_measurements(steps_max, params)
 
     measurements = generate_measurement_set(true_measurements, false_measurements, steps_max, params)
+
+    tensor = tensor_from_measurements(measurements, steps_max)
+    print(tensor)
