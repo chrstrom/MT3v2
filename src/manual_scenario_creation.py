@@ -23,7 +23,7 @@ class CVObject:
     y: float
     vx: float
     vy: float
-    dt: float = 0.1
+    dt: float = 1
     
     def __post_init__(self):
         self.track = np.array([[self.x, self.y]])
@@ -48,6 +48,12 @@ def plot_lambda(x, f):
     plt.scatter(f(x)[0], f(x)[1], alpha=decaying_opacity)
 
 
+def cv_object(r, theta):
+    return CVObject(-r * np.cos(theta),
+                    -r * np.sin(theta),
+                    np.cos(theta),
+                    np.sin(theta))
+    
 
 # def generate_csv(X, functions):
     
@@ -63,30 +69,32 @@ def plot_lambda(x, f):
 
 if __name__ == "__main__":
 
-    T0 = CVObject(0, -10, sog, 0)
-
+    n_traj = 8
     n_steps = 20
 
+    beta = np.pi / n_traj
+    theta = np.pi / 2
+
+    objects = []
+    for i in range(n_traj):
+        objects.append(cv_object(10, theta - i*beta))
+
     for step in range(n_steps):
-        T0.step()
+        for object in objects:
+            object.step()
 
+    for object in objects:
+        object.scatter()
 
-    T0.scatter()
+    legend = []
+    for i in range(n_traj):
+        legend.append(f"T{i}")
 
-    # T0 = lambda x : (np.repeat(0, len(x)), x)
-    # T1 = lambda x : (x, x)
-    # T2 = lambda x : (x, np.repeat(0, len(x)))
-    # T3 = lambda x : (x, -x)
-
-    # X = np.linspace(-10, 10, 21)
-
-    # plot_lambda(X, T0)
-    # plot_lambda(X, T1)
-    # plot_lambda(X, T2)
-    # plot_lambda(X, T3)
-
-    # leg = plt.legend(["T0","T1","T2","T3"])
-    # for lh in leg.legendHandles: 
-    #     lh.set_alpha(1)
-    # plt.title("Manually generated test scenario. Points with greater alpha are more recent.")
+    leg = plt.legend(legend)
+    for lh in leg.legendHandles: 
+        lh.set_alpha(1)
+        
+    plt.title("Manually generated test scenario. Points with greater alpha are more recent.")
+    plt.xlim([-11, 11])
+    plt.ylim([-11, 11])
     plt.show()
