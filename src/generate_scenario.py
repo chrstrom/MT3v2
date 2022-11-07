@@ -7,6 +7,7 @@ import copy
 import torch
 
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 
 from typing import Tuple
@@ -16,9 +17,11 @@ from util.load_config_files import load_yaml_into_dotdict
 from modules.loss import MotLoss
 
 from modules.models.mt3v2.mt3v2 import MT3V2
-from util.misc import NestedTensor
+from util.misc import NestedTensor, nested_tensor_from_tensor_list
 
 from matplotlib.patches import Ellipse
+
+from data_loader import tensor_from_gt
 
 
 
@@ -26,6 +29,8 @@ from matplotlib.patches import Ellipse
 # TODO: Test specific scenario with different levels of measurement noise
 
 # TODO: Should I focus on object complexity or noise complexity? (or both..)
+
+# TODO: GOSPA for each timestep with manual creation, plot timestep vs GOSPA like Mahler
 
 
 def clip_measurements(measurements, N, offset=0):
@@ -36,8 +41,10 @@ def clip_measurements(measurements, N, offset=0):
     dt = 0.1
     measurements = measurements[0]
     clipped_measurements = []
+
     for measurement in measurements:
-        if offset * dt < measurement[3] < (N + offset) * dt:
+
+        if offset * dt < measurement[3] <= (N + offset) * dt:
             clipped_measurements.append(measurement.tolist())
 
     return tuple(np.array([clipped_measurements]))
@@ -118,21 +125,23 @@ def plot_ground_truth(trajectories, prior_lengths, n_historical_steps):
         Xgt, Ygt = get_xy_from_data(track)
 
         Xgt_size = posterior_lengths.get(track_id)
-        if Xgt_size != Xgt[-1] and Xgt_size != -1: # Hack to ensure that only active tracks are drawn
-            posterior_lengths[track_id] = Xgt[-1]
-            n_hist = min(len(Xgt), n_historical_steps)
-            for i in range(n_hist):
-                if i == 0:
-                    plt.plot(Xgt[-i-3:-i-1], Ygt[-i-3:-i-1], 'o-', c=cmap(color_idx), alpha = 1 - i/n_hist, label=f"Track #{track_id}")
-                else:
-                    plt.plot(Xgt[-i-3:-i-1], Ygt[-i-3:-i-1], 'o-', c=cmap(color_idx), alpha = 1 - i/n_hist)
 
-            VXgt, VYgt = get_vxvy_from_data(track)
+        # TODO: cleanup, since this needs to be commented for manual scenario creation
+        #if Xgt_size != Xgt[-1] and Xgt_size != -1: # Hack to ensure that only active tracks are drawn
+        posterior_lengths[track_id] = Xgt[-1]
+        n_hist = min(len(Xgt), n_historical_steps)
+        for i in range(n_hist):
+            if i == 0:
+                plt.plot(Xgt[-i-3:-i-1], Ygt[-i-3:-i-1], 'o-', c=cmap(color_idx), alpha = 1 - i/n_hist, label=f"Track #{track_id}")
+            else:
+                plt.plot(Xgt[-i-3:-i-1], Ygt[-i-3:-i-1], 'o-', c=cmap(color_idx), alpha = 1 - i/n_hist)
 
-            # Plot GT diamond and velocity arrow
-            plt.plot(Xgt[-1], Ygt[-1], marker='D', color='g', markersize=5, label="Latest gt")
-            if do_plot_vel:
-                plt.arrow(Xgt[-1], Ygt[-1], VXgt[-1], VYgt[-1], color='g', head_width=0.2, length_includes_head=True)
+        VXgt, VYgt = get_vxvy_from_data(track)
+
+        # Plot GT diamond and velocity arrow
+        plt.plot(Xgt[-1], Ygt[-1], marker='D', color='g', markersize=5, label="Latest gt")
+        if do_plot_vel:
+            plt.arrow(Xgt[-1], Ygt[-1], VXgt[-1], VYgt[-1], color='g', head_width=0.2, length_includes_head=True)
 
 
         else:
@@ -171,7 +180,6 @@ def pad_to_batch_max(training_data, max_len):
 
 # This should not index directly based on window_size, instead find all measurements with timestamp inside range, and plot.
 def sliding_window(tensor: NestedTensor, offset:int, window_size=20) -> NestedTensor:
-    #print(tensor)
     max_len = max(list(map(len, tensor.tensors)))
     window = tuple([tensor.tensors.numpy()[0][offset:offset+window_size]])
     padded_window, mask = pad_to_batch_max(window, max_len)
@@ -194,7 +202,6 @@ def output_truth_plot(ax, prediction, labels, indices, batch, params):
         raise NotImplementedError('Plotting not working yet for shape predictions.')
 
     # Get ground-truth, predicted state, and logits for chosen training example
-    #print(matched_idx)
     truth = labels[0].cpu().numpy()
     #indices = tuple([t.cpu().detach().numpy() for t in matched_idx[0]])
 
@@ -276,8 +283,7 @@ def step_once(event):
 
     prediction, intermediate_predictions, encoder_prediction, aux_classifications, _ = model.forward(clipped_measurements, timestep)
     output_existence_probabilities = prediction.logits.sigmoid().detach().cpu().numpy().flatten()
-    #print(output_existence_probabilities)
-    existence_threshold = 0.90 # Hyperparameter
+    existence_threshold = 0.70 # Hyperparameter
     alive_indices = np.where(output_existence_probabilities > existence_threshold)[0]
     #prediction_in_format_for_loss = {'state': torch.cat((prediction.positions, prediction.velocities), dim=2),
     #                                    'logits': prediction.logits,
@@ -287,8 +293,9 @@ def step_once(event):
 
 
     # Plot results
-    clipped_true_measurements = clip_measurements(true_measurements, M, timestep + N - M + 1)
-    clipped_false_measurements = clip_measurements(false_measurements, M, timestep + N - M + 1)
+    # TODO: Figure out what to do with the offset, as it depends on M
+    clipped_true_measurements = clip_measurements(true_measurements, M, timestep + 20)
+    clipped_false_measurements = clip_measurements(false_measurements, M, timestep +20)
 
     plot_measurements(clipped_true_measurements, clipped_false_measurements)
     prior_lengths = plot_ground_truth(clipped_trajectories, prior_lengths, 10)
@@ -305,8 +312,8 @@ def step_once(event):
     output_ax.set_ylabel('North')
     output_ax.set_xlabel('East')
     output_ax.grid('on')
-    output_ax.set_xlim([-10, 20]) 
-    output_ax.set_ylim([-15, 15]) 
+    output_ax.set_xlim([-10, 10]) 
+    output_ax.set_ylim([-10, 10]) 
 
     fig.canvas.draw()
     fig.canvas.flush_events()
@@ -332,13 +339,17 @@ def update_labels(trajectories, timestep):
         # displays them. However, GOSPA depends on labels, and to assess performance, the labels
         # need to be updated.
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('-tp', '--task_params', help='filepath to configuration yaml file defining the task', required=True)
     parser.add_argument('-mp', '--model_params', help='filepath to configuration yaml file defining the model', required=True)
+    parser.add_argument("-s", "--scenario")
     parser.add_argument('--continue_training_from', help='filepath to folder of an experiment to continue training from')
     parser.add_argument('--exp_name', help='Name to give to the results folder')
+
     args = parser.parse_args()
+
     print(f'Task configuration file: {args.task_params}')
     print(f'Model configuration file: {args.model_params}')
 
@@ -393,13 +404,21 @@ if __name__ == "__main__":
     # Calculate all values used for plotting
 
     measurements, labels, unique_ids, _, trajectories, true_measurements, false_measurements = data_generator.get_batch()
-    print(measurements)
+
+    gt = pd.read_csv(args.scenario, delimiter=',') # assume: [id, x, y, vx, vy, t]
+
+    tensor, true_measurements, false_measurements, trajectories = tensor_from_gt(gt, params)
+
+    mask = torch.tensor([False]).repeat(tensor.size()[1])
+    mask = mask[None, :]
+
+    measurements = NestedTensor(tensor, mask)
 
     do_plot_preds = True
     do_plot_ellipse = True
     do_plot_vel = False
     do_plot_unmatched_hypotheses = True
-    do_interactive = True
+    do_interactive = False
 
     if not do_interactive:
         plt.ion() # Required for dynamic plot updates
@@ -407,7 +426,7 @@ if __name__ == "__main__":
 
     K = 10 # amount of gt in the past to plot.
     N = 20 # Track length to consider. This cannot be longer than 20 since the learned position encoding is fixed in size
-    M = 3 # amount of measurements in the past to plot.
+    M = 1 # amount of measurements in the past to plot.
 
     prior_lengths = {}
     timestep = 0
@@ -437,7 +456,7 @@ if __name__ == "__main__":
         except RuntimeError as e:
             exit()
     else:
-        for _ in range(30):
+        for _ in range(60):
             # TODO: Add pause function
             
             step_once(None)

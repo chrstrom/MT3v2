@@ -28,7 +28,7 @@ class CVObject:
         self.track = np.array(self.current_gt())
         
     def current_gt(self):
-        return [[int(self.id), self.x, self.y, self.vx, self.vy, np.round(self.t)]]
+        return [[int(self.id), self.x, self.y, self.vx, self.vy, np.round(self.t, 3)]]
         
 
     def step(self):
@@ -51,8 +51,8 @@ class CVObject:
 def cv_object(r, theta, id):
     return CVObject(-r * np.cos(theta),
                     -r * np.sin(theta),
-                    5*np.cos(theta),
-                    5*np.sin(theta),
+                    (r/5)*np.cos(theta),
+                    (r/5)*np.sin(theta),
                     id)
     
 
@@ -79,14 +79,14 @@ def generate_csv(objects, n_steps):
 if __name__ == "__main__":
 
     n_traj = 8
-    n_steps = 20
+    n_steps = 100
 
     beta = np.pi / n_traj
     theta = np.pi / 2
 
     objects = []
     for i in range(n_traj):
-        objects.append(cv_object(5, theta - i*beta, id=i))
+        objects.append(cv_object(10, theta - i*beta, id=i))
 
     for step in range(n_steps):
         for object in objects:
@@ -108,6 +108,5 @@ if __name__ == "__main__":
 
         
     plt.title("Manually generated test scenario. Points with greater alpha are more recent.")
-    plt.xlim([-11, 11])
-    plt.ylim([-11, 11])
+
     plt.show()

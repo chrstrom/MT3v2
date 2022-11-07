@@ -20,8 +20,6 @@ import pandas as pd
 
 from util.load_config_files import load_yaml_into_dotdict
 
-
-
 def measurement_from_gt(ground_truth, add_noise = False, params = None):
     x = ground_truth[:, 1]
     y = ground_truth[:, 2]
@@ -41,8 +39,8 @@ def measurement_from_gt(ground_truth, add_noise = False, params = None):
         noise = params.data_generation.measurement_noise_stds
 
         range_m = np.random.normal(range_m, noise[0])
-        bearing = np.random.normal(bearing, noise[1])
-        range_rate = np.random.normal(range_rate, noise[2])
+        range_rate = np.random.normal(range_rate, noise[1])
+        bearing = np.random.normal(bearing, noise[2])
 
     # Find number of occurences of each timestep, used in order to put measurements in a 3D array, indexed by timestep
     times = np.zeros(steps_max)
@@ -55,8 +53,8 @@ def measurement_from_gt(ground_truth, add_noise = False, params = None):
         gt_at_time_t = []
         for _ in range(int(i)):
             gt_at_time_t.append(np.column_stack((range_m[step],
-                                                 bearing[step], 
                                                  range_rate[step],
+                                                 bearing[step],
                                                  np.round(t[step], 3)))
                                                  [0].tolist())
             step += 1
@@ -129,6 +127,59 @@ def tensor_from_measurements(measurements, steps_max):
     return tensor_out
 
 
+def tensor_from_gt(gt, params):
+    
+    # NOTE: True and false measurements are a 3d array, where the first index
+    # can be used to retrieve all measurements at a given timestep
+    # Each invidivdual element is on the form [r, theta, rdot, t]
+
+    ids, true_measurements, steps_max = measurement_from_gt(gt.values, True, params)
+    false_measurements = generate_false_measurements(steps_max, params)
+
+    measurements = generate_measurement_set(true_measurements, false_measurements, steps_max, params)
+
+    tensor = tensor_from_measurements(measurements, steps_max)
+
+    #(array([[    , )
+    true_measurements_out = []
+    for measurement in true_measurements:
+        # measurement is at time t
+        for target in measurement:
+            true_measurements_out.append(target)
+
+    false_measurements_out = []
+    for measurement in false_measurements:
+        # measurement is at time t
+        for target in measurement:
+            false_measurements_out.append(target)
+
+    true_measurements_out = np.array((true_measurements_out))
+    false_measurements_out = np.array((false_measurements_out))
+
+    # Trajectories:
+    #[{0: array([[ 2.69295696, -0.20089073,  0.81526024,  0.48486329,  0.        ],
+     #  [ 2.76901123, -0.1427008 ,  0.64528989,  0.63871589,  0.1       ]]), 1: 
+
+    # array with dict, where key=id and value= array([[]]) of the historical track for each object
+
+    trajectory = {}
+
+    for target in gt.values:
+        id = int(target[0])
+        single_trajectory = target[1:].tolist()
+
+        if id in trajectory:
+            trajectory |=  {id: trajectory[id] + [single_trajectory]}
+        else:
+            trajectory[id] = [single_trajectory]
+
+    for key, value in trajectory.items():
+        trajectory[key] = np.array(value)
+
+        
+
+    return tensor, (true_measurements_out,), (false_measurements_out,), [trajectory]
+
 
 if __name__ == "__main__":
     
@@ -138,17 +189,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
     params = load_yaml_into_dotdict(args.task_params)
 
-    dt = 0.1
 
     gt = pd.read_csv(args.scenario, delimiter=',') # assume: [id, x, y, vx, vy, t]
 
-    # NOTE: True and false measurements are a 3d array, where the first index
-    # can be used to retrieve all measurements at a given timestep
-    # Each invidivdual element is on the form [r, theta, rdot, t]
-    ids, true_measurements, steps_max = measurement_from_gt(gt.values, True, params)
-    false_measurements = generate_false_measurements(steps_max, params)
-
-    measurements = generate_measurement_set(true_measurements, false_measurements, steps_max, params)
-
-    tensor = tensor_from_measurements(measurements, steps_max)
-    print(tensor)
+    tensor, _, _, traj = tensor_from_gt(gt, params)
+    print(traj)
+    #print(tensor)

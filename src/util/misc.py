@@ -43,12 +43,12 @@ def _max_by_axis(the_list):
 
 def nested_tensor_from_tensor_list(tensor_list: List[Tensor]):
     # TODO make this more general
-    if tensor_list[0].ndim == 3:
+    if tensor_list[0].ndim == 2:
         # TODO make it support different-sized images
         max_size = _max_by_axis([list(meas.shape) for meas in tensor_list])
         # min_size = tuple(min(s) for s in zip(*[img.shape for img in tensor_list]))
         batch_shape = [len(tensor_list)] + max_size
-        b, c, h, w = batch_shape
+        b, h, w = batch_shape
         dtype = tensor_list[0].dtype
         device = tensor_list[0].device
         tensor = torch.zeros(batch_shape, dtype=dtype, device=device)
