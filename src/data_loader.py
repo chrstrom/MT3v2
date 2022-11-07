@@ -30,6 +30,7 @@ def measurement_from_gt(ground_truth, add_noise = False, params = None):
     t = ground_truth[:, 5]
 
     range_m = np.sqrt(x*x + y*y)
+    range_m[range_m < 1e-8] = 1e-8 # Avoid div by zero
     bearing = np.arctan2(y, x)
     range_rate = (x * vx + y * vy) / range_m 
 
