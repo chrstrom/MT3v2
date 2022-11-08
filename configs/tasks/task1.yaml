@@ -14,7 +14,7 @@ data_generation:
     avg_gt_objects: 2 # based on 1k samples
     field_of_view:
         min_range: 0.5
-        max_range: 10
+        max_range: 15
         max_range_rate: 30
 # What should these be????
         min_theta: -3.14
@@ -34,3 +34,5 @@ data_generation:
 # Fixed. Then sanity checked by turning the measurement noise std to zero. THIS WORKS WELL
 
 # include the above in the scenario management section perhaps...
+
+# Scenario setup: objects move from edges of radar range, all crossing the origin at the same time
