@@ -181,6 +181,33 @@ def tensor_from_gt(gt, params):
     return tensor, (true_measurements_out,), (false_measurements_out,), [trajectory]
 
 
+def label_at_step_from_gt(gt, step):
+    time = np.round(step * 0.1, 3)
+
+    labels = []
+    for data in gt.values:
+        if data[5] == time:
+            labels.append(data[1:5].tolist())
+    
+    label_tensor = torch.tensor(labels)
+
+    return [label_tensor]
+
+def label_at_time_from_gt(gt, time):
+    time = np.round(time, 3)
+
+    labels = []
+    for data in gt.values:
+        if data[5] == time:
+            labels.append(data[1:5].tolist())
+    
+    label_tensor = torch.tensor(labels)
+
+    return [label_tensor]
+
+
+
+
 if __name__ == "__main__":
     
     parser = argparse.ArgumentParser()
@@ -193,5 +220,7 @@ if __name__ == "__main__":
     gt = pd.read_csv(args.scenario, delimiter=',') # assume: [id, x, y, vx, vy, t]
 
     tensor, _, _, traj = tensor_from_gt(gt, params)
-    print(traj)
+    label = label_at_step_from_gt(gt, 0)
+    print(label)
+    #print(traj)
     #print(tensor)

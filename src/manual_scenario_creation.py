@@ -68,7 +68,7 @@ def generate_csv(objects, n_steps):
         
         track_sorted_by_time.append(tracks)
 
-    with open("tracks.csv", "w", newline="") as f:
+    with open(f"{n_traj}tracks.csv", "w", newline="") as f:
         writer = csv.writer(f)
         for step in track_sorted_by_time:
 
@@ -86,7 +86,7 @@ if __name__ == "__main__":
 
     objects = []
     for i in range(n_traj):
-        objects.append(cv_object(10, theta - i*beta, id=i))
+        objects.append(cv_object(12.5, theta - i*beta, id=i))
 
     for step in range(n_steps):
         for object in objects:
