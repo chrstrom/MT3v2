@@ -486,7 +486,7 @@ if __name__ == "__main__":
         except RuntimeError as e:
             exit()
     else:
-        for _ in range(60):
+        for _ in range(80):
             # TODO: Add pause function
             
             step_once(None)
@@ -539,7 +539,9 @@ However: this symmetry only occurs from timestep 20 onwards. This is likely beca
 such, the information available to the tracker is skewed from timestep 0 to 19
 
 
-
 Make sure to up the Radar max range for scenarios that start far away!
+
+
+Changing radar parameters: Considerations?
 
 """

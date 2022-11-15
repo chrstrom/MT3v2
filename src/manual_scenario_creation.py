@@ -16,24 +16,26 @@ sog = 1.0
 
 @dataclass
 class CVObject:
-    x: float
-    y: float
-    vx: float
-    vy: float
+    pos: np.ndarray = None
+    vel: np.ndarray = None
     id: int = None
+    sigma: float = 1.0
     dt: float = 0.1
     t: float = 0
     
+    
     def __post_init__(self):
+        self.process_noise_matrix = self.sigma*np.array([[self.dt ** 3 / 3, self.dt ** 2 / 2], [self.dt ** 2 / 2, self.dt]])
         self.track = np.array(self.current_gt())
         
     def current_gt(self):
-        return [[int(self.id), self.x, self.y, self.vx, self.vy, np.round(self.t, 3)]]
+        return [[int(self.id), self.pos[0], self.pos[1], self.vel[0], self.vel[1], np.round(self.t, 3)]]
         
 
     def step(self):
-        self.x += self.vx * self.dt
-        self.y += self.vy * self.dt
+        process_noise = np.random.multivariate_normal([0, 0], self.process_noise_matrix, size=len(self.pos))
+        self.pos += self.dt * self.vel + process_noise[:,0]
+        self.vel += process_noise[:,1]
         self.t += self.dt
 
         self.track = np.append(self.track, self.current_gt(), axis=0)
@@ -48,12 +50,10 @@ class CVObject:
 
 
 
-def cv_object(r, theta, id):
-    return CVObject(-r * np.cos(theta),
-                    -r * np.sin(theta),
-                    (r/5)*np.cos(theta),
-                    (r/5)*np.sin(theta),
-                    id)
+def cv_object(r, theta, id, sigma):
+    return CVObject(np.array((-r * np.cos(theta), -r * np.sin(theta))),
+                    np.array(((r/5)*np.cos(theta), (r/5)*np.sin(theta))),
+                    id, sigma)
     
 
 
@@ -73,8 +73,47 @@ def generate_csv(objects, n_steps):
         for step in track_sorted_by_time:
 
             writer.writerows(step)
+
+
+def generate_pmbm_data(objects, n_steps, n_traj):
+    X_gt = np.empty((n_traj*4, n_steps))
+    for step in range(n_steps):
+        m_at_step = []
+        for object in objects:
+
+            # Offset is done since the clutter PPP in matlab pmbm is only at positive xy
+            offset = 15
+            m_at_step += [object.track[step][1] + offset]
+            m_at_step += [object.track[step][3]]
+            m_at_step += [object.track[step][2] + offset]
+            m_at_step += [object.track[step][4]]
+
+        X_gt[:, step] = m_at_step
+
+    t_birth = np.ones(n_traj)
+    t_death = n_steps * np.ones(n_traj)
+
+    return X_gt, t_birth, t_death
         
-    
+
+def align_objects(objects, timestep):
+
+    aligned_objects = []
+
+
+    for object in objects:
+        x_at_timestep = object.track[timestep][1]
+        y_at_timestep = object.track[timestep][2]
+
+        object.track[:, 1] -= x_at_timestep
+        object.track[:, 2] -= y_at_timestep
+
+        aligned_objects.append(object)
+
+
+    return aligned_objects
+
+        
 
 if __name__ == "__main__":
 
@@ -86,11 +125,13 @@ if __name__ == "__main__":
 
     objects = []
     for i in range(n_traj):
-        objects.append(cv_object(12.5, theta - i*beta, id=i))
+        objects.append(cv_object(12.5, theta - i*beta, id=i, sigma=0.2))
 
     for step in range(n_steps):
         for object in objects:
             object.step()
+
+    objects = align_objects(objects, int(n_steps/2))
 
     for object in objects:
         object.scatter()
@@ -103,10 +144,13 @@ if __name__ == "__main__":
     for lh in leg.legendHandles: 
         lh.set_alpha(1)
 
-    generate_csv(objects, n_steps)
+    #generate_csv(objects, n_steps)
 
+    X_gt, t_birth, t_death = generate_pmbm_data(objects, n_steps, n_traj)
+    np.savetxt("./X_gt.dat", X_gt, delimiter=',')
+    np.savetxt("./t_birth.dat", t_birth)
+    np.savetxt("./t_death.dat", t_death)
 
-        
     plt.title("Manually generated test scenario. Points with greater alpha are more recent.")
 
     plt.show()
