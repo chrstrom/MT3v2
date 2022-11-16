@@ -1,9 +1,3 @@
-"""
-
-TODO: More realistic track evolution.
-
-"""
-
 import numpy as np
 import csv
 
@@ -117,8 +111,8 @@ def align_objects(objects, timestep):
 
 if __name__ == "__main__":
 
-    n_traj = 8
-    n_steps = 100
+    n_traj = 4
+    n_steps = 120
 
     beta = np.pi / n_traj
     theta = np.pi / 2
@@ -131,7 +125,7 @@ if __name__ == "__main__":
         for object in objects:
             object.step()
 
-    objects = align_objects(objects, int(n_steps/2))
+    objects = align_objects(objects, 60)
 
     for object in objects:
         object.scatter()
@@ -144,13 +138,13 @@ if __name__ == "__main__":
     for lh in leg.legendHandles: 
         lh.set_alpha(1)
 
-    #generate_csv(objects, n_steps)
+    generate_csv(objects, n_steps)
 
     X_gt, t_birth, t_death = generate_pmbm_data(objects, n_steps, n_traj)
-    np.savetxt("./X_gt.dat", X_gt, delimiter=',')
-    np.savetxt("./t_birth.dat", t_birth)
-    np.savetxt("./t_death.dat", t_death)
+    np.savetxt(f"./X_gt_{n_traj}.dat", X_gt, delimiter=',')
+    np.savetxt(f"./t_birth_{n_traj}.dat", t_birth)
+    np.savetxt(f"./t_death_{n_traj}.dat", t_death)
 
-    plt.title("Manually generated test scenario. Points with greater alpha are more recent.")
+    plt.title(f"Manually generated test scenario with {n_traj} objects. Points with greater alpha are more recent.")
 
     plt.show()

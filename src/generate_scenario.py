@@ -11,6 +11,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 from typing import Tuple
+from operator import add
 
 from data_generation.data_generator import DataGenerator
 from util.load_config_files import load_yaml_into_dotdict
@@ -41,7 +42,6 @@ def clip_measurements(measurements, N, offset=0):
     dt = 0.1
     measurements = measurements[0]
     clipped_measurements = []
-
     for measurement in measurements:
 
         if offset * dt < measurement[3] <= (N + offset) * dt:
@@ -57,7 +57,6 @@ def clip_batch(tensor: NestedTensor, N: int, offset=0) -> NestedTensor:
 
     # if len(clipped_measurements[0]) == 0:
     #     return None
-
     padded_window, mask = pad_to_batch_max(clipped_measurements, max_len)
     nested_tensor = NestedTensor(torch.Tensor(padded_window).to(torch.device(params.training.device)),
                                  torch.Tensor(mask).bool().to(torch.device(params.training.device)))
@@ -323,8 +322,9 @@ def step_once(event):
     # Plot results
     # TODO: Figure out what to do with the offset, as it depends on M
     if do_plot:
-        clipped_true_measurements = clip_measurements(true_measurements, M, timestep + 20 - M)
-        clipped_false_measurements = clip_measurements(false_measurements, M, timestep + 20 - M)
+        clipped_true_measurements = clip_measurements(true_measurements, M, timestep)
+        clipped_false_measurements = clip_measurements(false_measurements, M, timestep)
+
 
         scatter_and_decay(clipped_true_measurements, color="r", label= "True measurements")
         scatter_and_decay(clipped_false_measurements, color="k", label="False measurements")
@@ -441,7 +441,7 @@ if __name__ == "__main__":
 
     measurements = NestedTensor(tensor, mask)
 
-    do_plot = True
+    do_plot = False
     do_plot_preds = True
     do_plot_ellipse = True
     do_plot_vel = False
@@ -458,12 +458,18 @@ if __name__ == "__main__":
     M = 20 # amount of measurements in the past to plot.
 
     prior_lengths = {}
-    timestep = 0
+    timestep = 0 # Have to start at 20 to avoid problems with the network 
     gospa_total = []
     gospa_loc = []
     gospa_loc_norm = []
     gospa_miss = []
     gospa_false = []
+
+    all_gospa_total = None
+    all_gospa_loc = None
+    all_gospa_loc_norm = None
+    all_gospa_miss = None
+    all_gospa_false = None
 
     # Batch includes all MEASUREMENTS, and thus the window should gate measurements on their timestep, not the amount of measurements.
  
@@ -474,6 +480,8 @@ if __name__ == "__main__":
 
     # TODO: How to test for active hypotheses for each time step. I.e. is there a probability array that can be printed?
 
+
+    n_mc = 10
 
     if do_interactive:
         try:
@@ -486,34 +494,67 @@ if __name__ == "__main__":
         except RuntimeError as e:
             exit()
     else:
-        for _ in range(80):
-            # TODO: Add pause function
-            
-            step_once(None)
-            print(f"Step: {timestep}")
-            #time.sleep(0.1)
+        for _ in range(n_mc):
+            prior_lengths = {}
+            timestep = 0 # Have to start at 20 to avoid problems with the network 
+            gospa_total = []
+            gospa_loc = []
+            gospa_loc_norm = []
+            gospa_miss = []
+            gospa_false = []
+            for _ in range(99):
+                # TODO: Add pause function
+                
+                step_once(None)
+                print(f"Step: {timestep}")
+                #time.sleep(0.1)
+            if all_gospa_total is None:
+                all_gospa_total = gospa_total
+            else:
+                all_gospa_total = list(map(add, all_gospa_total, gospa_total))
+
+            if all_gospa_loc is None:
+                all_gospa_loc = gospa_loc
+            else:
+                all_gospa_loc = list(map(add, all_gospa_loc, gospa_loc))
+
+            if all_gospa_loc_norm is None:
+                all_gospa_loc_norm = gospa_loc_norm
+            else:
+                all_gospa_loc_norm = list(map(add, all_gospa_loc_norm, gospa_loc_norm))
+
+            if all_gospa_miss is None:
+                all_gospa_miss = gospa_miss
+            else:
+                all_gospa_miss = list(map(add, all_gospa_miss, gospa_miss))
+
+            if all_gospa_false is None:
+                all_gospa_false = gospa_false
+            else:
+                all_gospa_false = list(map(add, all_gospa_false, gospa_false))
 
         # Turn off interactive and keep plot open
         plt.ioff()
         #plt.show()
 
-    total_gospa = np.array(gospa_total)
-    total_loc = np.array(gospa_loc)
-    total_loc_norm = np.array(gospa_loc_norm)
-    total_miss = np.array(gospa_miss)
-    total_false = np.array(gospa_false)
+    total_gospa = np.array(all_gospa_total) / n_mc
+    rms_gospa = np.sqrt(total_gospa**2)
+    total_loc = np.array(all_gospa_loc) / n_mc
+    total_loc_norm = np.array(all_gospa_loc_norm) / n_mc
+    total_miss = np.array(all_gospa_miss) / n_mc
+    total_false = np.array(all_gospa_false) / n_mc
 
     fig, ax = plt.subplots(5, 1)
     fig.tight_layout()
-    ax[0].plot(np.arange(len(total_gospa)), total_gospa)
-    ax[0].set_title("GOSPA: Total")
-    ax[1].plot(np.arange(len(total_loc)), total_loc)
+    ax[0].plot(np.arange(20, len(rms_gospa)+20), rms_gospa)
+    ax[0].set_title("RMS GOSPA error")
+    ax[1].plot(np.arange(20, len(total_loc)+20), total_loc)
     ax[1].set_title("GOSPA: Localization error")
-    ax[2].plot(np.arange(len(total_loc_norm)), total_loc_norm)
+    ax[2].plot(np.arange(20, len(total_loc_norm)+20), total_loc_norm)
     ax[2].set_title("GOSPA: Localization error (normalized for # objects)")
-    ax[3].plot(np.arange(len(total_miss)), total_miss)
+    ax[3].plot(np.arange(20, len(total_miss)+20), total_miss)
     ax[3].set_title("GOSPA: Missed objects")
-    ax[4].plot(np.arange(len(total_false)), total_false)
+    ax[4].plot(np.arange(20, len(total_false)+20), total_false)
     ax[4].set_title("GOSPA: False detections")
 
     #fig.suptitle("GOSPA over time for scenario with 6 targets. Targets collide at step 32")
@@ -521,7 +562,7 @@ if __name__ == "__main__":
 
     import scipy.stats as st
 
-    print(f"GOSPA: {total_gospa.mean()} +/- {max(st.norm.interval(0.95, loc=0, scale=st.sem(total_gospa)))}")
+    print(f"RMS GOSPA: {rms_gospa.mean()} +/- {max(st.norm.interval(0.95, loc=0, scale=st.sem(rms_gospa)))}")
     print(f"LOC: {total_loc.mean()} +/- {max(st.norm.interval(0.95, loc=0, scale=st.sem(total_loc)))}")
     print(f"MISS: {total_miss.mean()} +/- {max(st.norm.interval(0.95, loc=0, scale=st.sem(total_miss)))}")
     if total_false.sum() == 0:
