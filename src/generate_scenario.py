@@ -3,6 +3,7 @@ import time
 import argparse
 import random
 import copy
+from tqdm import tqdm
 
 import torch
 
@@ -23,16 +24,6 @@ from util.misc import NestedTensor, nested_tensor_from_tensor_list
 from matplotlib.patches import Ellipse
 
 from data_loader import tensor_from_gt, label_at_step_from_gt
-
-
-
-# TODO: Create interface for user-generated measurement generation
-# TODO: Test specific scenario with different levels of measurement noise
-
-# TODO: Should I focus on object complexity or noise complexity? (or both..)
-
-# TODO: GOSPA for each timestep with manual creation, plot timestep vs GOSPA like Mahler
-
 
 def clip_measurements(measurements, N, offset=0):
     """
@@ -130,15 +121,15 @@ def plot_ground_truth(trajectories, prior_lengths, n_historical_steps):
         posterior_lengths[track_id] = Xgt[-1]
         n_hist = min(len(Xgt), n_historical_steps)
 
-        alphas = np.exp(5*np.linspace(0.1, 1, n_hist)) # The constant multiplied here is the rate of decay (higher = more decay)
+        alphas = np.exp(5*np.linspace(0.8, 1, n_hist)) # The constant multiplied here is the rate of decay (higher = more decay)
         alphas = alphas / np.max(alphas)
         alphas = np.flip(alphas)
 
         for i in range(n_hist):
             if i == 0:
-                plt.plot(Xgt[-i-3:-i-1], Ygt[-i-3:-i-1], 'o-', c=cmap(color_idx), alpha = alphas[i], label=f"Track #{track_id}", markersize=5)
+                plt.plot(Xgt[-i-3:-i-1], Ygt[-i-3:-i-1], '-', c=cmap(color_idx), alpha = alphas[i], label=f"Track #{track_id}", markersize=5)
             else:
-                plt.plot(Xgt[-i-3:-i-1], Ygt[-i-3:-i-1], 'o-', c=cmap(color_idx),  alpha = alphas[i], markersize=5)
+                plt.plot(Xgt[-i-3:-i-1], Ygt[-i-3:-i-1], '-', c=cmap(color_idx),  alpha = alphas[i], markersize=5)
 
         VXgt, VYgt = get_vxvy_from_data(track)
 
@@ -151,19 +142,10 @@ def plot_ground_truth(trajectories, prior_lengths, n_historical_steps):
         else:
             posterior_lengths[track_id] = -1
 
-        # n_hist = min(len(Xgt), n_historical_steps)
-        # for i in range(n_hist):
-        #     plt.plot(Xgt[-i-3:-i-1], Ygt[-i-3:-i-1], 'o-', c=cmap(color_idx), alpha = 1 - i/n_hist)
-
-        # VXgt, VYgt = get_vxvy_from_data(track)
-
-        # # Plot GT diamond and velocity arrow
-        # plt.arrow(Xgt[-1], Ygt[-1], VXgt[-1], VYgt[-1], color='g', head_width=0.2, length_includes_head=True)
-        # plt.plot(Xgt[-1], Ygt[-1], marker='D', color='g', markersize=5, label="Latest gt")
         
     return posterior_lengths
 
-def scatter_and_decay(measurements, color="k", marker="x", label="", exponential=True):
+def scatter_and_decay(measurements, color="k", marker=".", label="", exponential=True):
     r, theta = get_rtheta_from_data(measurements[0])
     X, Y = get_xy_from_rtheta(r, theta)
     t = np.array((measurements[0]))[:, 3]
@@ -205,7 +187,7 @@ def sliding_window(tensor: NestedTensor, offset:int, window_size=20) -> NestedTe
     return nested_tensor
 
 @torch.no_grad()
-def output_truth_plot(ax, prediction, labels, indices, batch, params):
+def output_truth_plot(ax, prediction, indices, batch, params):
 
     assert hasattr(prediction, 'positions'), 'Positions should have been predicted for plotting.'
     assert hasattr(prediction, 'logits'), 'Logits should have been predicted for plotting.'
@@ -216,10 +198,6 @@ def output_truth_plot(ax, prediction, labels, indices, batch, params):
 
     if params.data_generation.prediction_target == 'position_and_shape':
         raise NotImplementedError('Plotting not working yet for shape predictions.')
-
-    # Get ground-truth, predicted state, and logits for chosen training example
-    truth = labels[0].cpu().numpy()
-    #indices = tuple([t.cpu().detach().numpy() for t in matched_idx[0]])
 
     if params.data_generation.prediction_target == 'position':
         out = prediction.positions[0].cpu().detach().numpy()
@@ -276,7 +254,7 @@ def output_truth_plot(ax, prediction, labels, indices, batch, params):
                     p = ax.plot(pos_x, pos_y, marker='*', color='k', label='Unmatched Predicted Object', markersize=5)
                     once = False
                 else:
-                    p = ax.plot(pos_x, pos_y, marker='*', color='k', markersize=5)
+                    p = ax.plot(pos_x, pos_y, marker='*', color='m', markersize=5)
 
                 if params.data_generation.prediction_target == 'position_and_velocity' and do_plot_vel:
                     ax.arrow(pos_x, pos_y, vel_x, vel_y, color='k', head_width=0.2, linestyle='--', length_includes_head=True)
@@ -294,21 +272,19 @@ def step_once(event):
     global gospa_false
 
     # Clip all data to a sliding window
-    clipped_trajectories = clip_trajectories(trajectories, N, timestep)
     clipped_measurements = clip_batch(measurements, N, timestep)
     label = label_at_step_from_gt(gt, timestep)
 
     prediction, intermediate_predictions, encoder_prediction, aux_classifications, _ = model.forward(clipped_measurements, timestep)
     output_existence_probabilities = prediction.logits.sigmoid().detach().cpu().numpy().flatten()
-    #print(output_existence_probabilities)
-    existence_threshold = 0.80 # Hyperparameter
+    existence_threshold = 0.75 # Hyperparameter
     alive_indices = np.where(output_existence_probabilities > existence_threshold)[0]
     prediction_in_format_for_loss = {'state': torch.cat((prediction.positions, prediction.velocities), dim=2),
                                        'logits': prediction.logits,
                                        'state_covariances': prediction.uncertainties ** 2}
-    loss, gospa_alive_indices, decomposition = mot_loss.gospa_forward(prediction_in_format_for_loss, label, probabilistic=False)
-    #print(loss)
-    #loss, alive_indices = mot_loss.gospa_forward(prediction_in_format_for_loss, labels, probabilistic=True)
+    loss, gospa_alive_indices, decomposition = mot_loss.gospa_forward(
+        prediction_in_format_for_loss, label, probabilistic=False,
+        existence_threshold=existence_threshold)
 
 
     gospa_total.append(loss.item())
@@ -324,20 +300,22 @@ def step_once(event):
     if do_plot:
         clipped_true_measurements = clip_measurements(true_measurements, M, timestep)
         clipped_false_measurements = clip_measurements(false_measurements, M, timestep)
+        clipped_trajectories = clip_trajectories(trajectories, N, timestep-M)
 
 
-        scatter_and_decay(clipped_true_measurements, color="r", label= "True measurements")
-        scatter_and_decay(clipped_false_measurements, color="k", label="False measurements")
+        scatter_and_decay(clipped_true_measurements, color="r", label= "True measurements", marker="x")
+        scatter_and_decay(clipped_false_measurements, color="k", label="False measurements", marker=".")
 
-        prior_lengths = plot_ground_truth(clipped_trajectories, prior_lengths, 10)
-        output_truth_plot(output_ax, prediction, labels, gospa_alive_indices[0][0], clipped_measurements, params)
+        prior_lengths = plot_ground_truth(clipped_trajectories, prior_lengths, M)
+        output_truth_plot(output_ax, prediction, gospa_alive_indices[0][0], clipped_measurements, params)
 
         output_ax.set_aspect('equal', 'box')
         output_ax.set_ylabel('North')
         output_ax.set_xlabel('East')
         output_ax.grid('on')
-        output_ax.set_xlim([-15, 15]) 
-        output_ax.set_ylim([-15, 15]) 
+        mlim = 20
+        output_ax.set_xlim([-mlim, mlim]) 
+        output_ax.set_ylim([-mlim, mlim]) 
 
         fig.canvas.draw()
         fig.canvas.flush_events()
@@ -345,24 +323,6 @@ def step_once(event):
         output_ax.clear()
 
     timestep += 1
-
-
-def update_labels(trajectories, timestep):
-    dt = 0.1
-    t = timestep * dt
-    
-    # TODO: LABELS MUST BE UPDATED FOR EVERY TIME STEP
-    #       Labels take the form of 
-    #[tensor([[x1, y1, vx1, vy1],
-    #              ...
-    #        [ xn, yn, vxn, vyn]])]
-    # For all ground truth objects AT THE CURRENT TIME STEP (1.9s )
-
-    # Q: Can the labels be circumvented by simply plotting all predictions with a certain existence probability?
-    # A: Yes! but..
-        # Current plotting just takes all measurements above a certain existence threshold and 
-        # displays them. However, GOSPA depends on labels, and to assess performance, the labels
-        # need to be updated.
 
 
 if __name__ == "__main__":
@@ -408,7 +368,7 @@ if __name__ == "__main__":
     params.data_generation.seed = params.general.pytorch_and_numpy_seed #2335718734 #random.randint(0, 9999999999999999999) # Tune this to get different runs
 
     data_generator = DataGenerator(params)
-    last_filename = "C:/Users/chris/MT3v2/task1/checkpoints/" + "checkpoint_gradient_step_999999"
+    last_filename = "C:/Users/chris/MT3v2/task2/checkpoints/" + "checkpoint_gradient_step_699999"
 
     # Load model weights and pass model to correct device
     prev = params.data_generation.n_timesteps
@@ -423,28 +383,24 @@ if __name__ == "__main__":
     mot_loss = MotLoss(eval_params)
     mot_loss.to(params.training.device)
     model.eval()
-    #mot_loss = MotLoss(eval_params)
 
     params.data_generation.n_timesteps = prev
     # Calculate all values used for plotting
 
-    measurements, labels, unique_ids, _, trajectories, true_measurements, false_measurements = data_generator.get_batch()
 
-
-    # Labels = 
     gt = pd.read_csv(args.scenario, delimiter=',') # assume: [id, x, y, vx, vy, t]
-
     tensor, true_measurements, false_measurements, trajectories = tensor_from_gt(gt, params)
-
     mask = torch.tensor([False]).repeat(tensor.size()[1])
     mask = mask[None, :]
-
     measurements = NestedTensor(tensor, mask)
 
-    do_plot = False
+    # For "normal" scenarios
+    measurements, labels, unique_ids, _, trajectories, true_measurements, false_measurements = data_generator.get_batch()
+
+    do_plot = True
     do_plot_preds = True
     do_plot_ellipse = True
-    do_plot_vel = False
+    do_plot_vel = True
     do_plot_unmatched_hypotheses = True
     do_interactive = False
 
@@ -458,7 +414,7 @@ if __name__ == "__main__":
     M = 20 # amount of measurements in the past to plot.
 
     prior_lengths = {}
-    timestep = 0 # Have to start at 20 to avoid problems with the network 
+    timestep = 20 # Have to start at 20 to avoid problems with the network 
     gospa_total = []
     gospa_loc = []
     gospa_loc_norm = []
@@ -481,7 +437,8 @@ if __name__ == "__main__":
     # TODO: How to test for active hypotheses for each time step. I.e. is there a probability array that can be printed?
 
 
-    n_mc = 10
+    n_mc = 1
+    n_ts = 100
 
     if do_interactive:
         try:
@@ -494,7 +451,8 @@ if __name__ == "__main__":
         except RuntimeError as e:
             exit()
     else:
-        for _ in range(n_mc):
+        for i in range(n_mc):
+            print(f"Monte carlo run {i + 1}/{n_mc}")
             prior_lengths = {}
             timestep = 0 # Have to start at 20 to avoid problems with the network 
             gospa_total = []
@@ -502,11 +460,10 @@ if __name__ == "__main__":
             gospa_loc_norm = []
             gospa_miss = []
             gospa_false = []
-            for _ in range(99):
+            for _ in tqdm(range(n_ts)):
                 # TODO: Add pause function
                 
                 step_once(None)
-                print(f"Step: {timestep}")
                 #time.sleep(0.1)
             if all_gospa_total is None:
                 all_gospa_total = gospa_total
@@ -546,16 +503,24 @@ if __name__ == "__main__":
 
     fig, ax = plt.subplots(5, 1)
     fig.tight_layout()
-    ax[0].plot(np.arange(20, len(rms_gospa)+20), rms_gospa)
+    
+    offset = 20
+    end = 91 + offset
+    ax[0].plot(np.arange(len(rms_gospa[offset:end])), rms_gospa[offset:end], "k")
     ax[0].set_title("RMS GOSPA error")
-    ax[1].plot(np.arange(20, len(total_loc)+20), total_loc)
+    ax[0].axvline(x=50, color="r", linestyle="--")
+    ax[1].plot(np.arange(len(total_loc[offset:end])), total_loc[offset:end], "k")
     ax[1].set_title("GOSPA: Localization error")
-    ax[2].plot(np.arange(20, len(total_loc_norm)+20), total_loc_norm)
+    ax[1].axvline(x=50, color="r", linestyle="--")
+    ax[2].plot(np.arange(len(total_loc_norm[offset:end])), total_loc_norm[offset:end], "k")
     ax[2].set_title("GOSPA: Localization error (normalized for # objects)")
-    ax[3].plot(np.arange(20, len(total_miss)+20), total_miss)
+    ax[2].axvline(x=50, color="r", linestyle="--")
+    ax[3].plot(np.arange(len(total_miss[offset:end])), total_miss[offset:end], "k")
     ax[3].set_title("GOSPA: Missed objects")
-    ax[4].plot(np.arange(20, len(total_false)+20), total_false)
+    ax[3].axvline(x=50, color="r", linestyle="--")
+    ax[4].plot(np.arange(len(total_false[offset:end])), total_false[offset:end], "k")
     ax[4].set_title("GOSPA: False detections")
+    ax[4].axvline(x=50, color="r", linestyle="--")
 
     #fig.suptitle("GOSPA over time for scenario with 6 targets. Targets collide at step 32")
 
