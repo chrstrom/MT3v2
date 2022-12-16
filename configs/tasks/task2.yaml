@@ -13,8 +13,8 @@ data_generation:
     n_avg_starting_objects: 6
     avg_gt_objects: 6.0 # Computed on 1k samples
     field_of_view:
-        min_range: 0.5
-        max_range: 15
+        min_range: 0.0
+        max_range: 25.0
         max_range_rate: 30
         min_theta: -3.14
         max_theta: 3.14

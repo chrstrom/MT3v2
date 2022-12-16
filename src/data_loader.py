@@ -15,12 +15,16 @@ import argparse
 import random
 import torch
 
+import scipy.io as io
+
 import numpy as np
 import pandas as pd
 
+import regex as re
+
 from util.load_config_files import load_yaml_into_dotdict
 
-def measurement_from_gt(ground_truth, add_noise = False, params = None):
+def measurement_from_gt(ground_truth, add_noise = False, params = None, starting_time = 0.0):
     x = ground_truth[:, 1]
     y = ground_truth[:, 2]
     vx = ground_truth[:, 3]
@@ -55,7 +59,7 @@ def measurement_from_gt(ground_truth, add_noise = False, params = None):
             gt_at_time_t.append(np.column_stack((range_m[step],
                                                  range_rate[step],
                                                  bearing[step],
-                                                 np.round(t[step], 3)))
+                                                 np.round(t[step] + starting_time, 3)))
                                                  [0].tolist())
             step += 1
         true_measurements.append(gt_at_time_t)
@@ -85,10 +89,9 @@ def get_measurement_at_step(step, measurements):
     return measurements[step]
 
 def generate_measurement_set(true_measurements, false_measurements, steps_max, params):
-
-    # drop true measurements
-        # Draw from uniform. If under p_meas, do not add a true measurement
-    # combine shuffled elements at a given timestep
+    """
+    Generate the final measurement set by combining true and false measurements
+    """
     measurements = []
 
     for step in range(steps_max):
@@ -127,40 +130,31 @@ def tensor_from_measurements(measurements, steps_max):
     return tensor_out
 
 
-def tensor_from_gt(gt, params):
-    
-    # NOTE: True and false measurements are a 3d array, where the first index
-    # can be used to retrieve all measurements at a given timestep
-    # Each invidivdual element is on the form [r, theta, rdot, t]
-
+def tensor_from_gt(gt, params, warmup_steps = 0):
+    """
+    Turn a ground-truth sequence into a tensor of measurements that is compatible
+    with MT3, using the clutter intensity and radar model as specified by the
+    task parameters.
+    """
     ids, true_measurements, steps_max = measurement_from_gt(gt.values, True, params)
-    false_measurements = generate_false_measurements(steps_max, params)
+    false_measurements = generate_false_measurements(steps_max + warmup_steps, params)
 
     measurements = generate_measurement_set(true_measurements, false_measurements, steps_max, params)
 
     tensor = tensor_from_measurements(measurements, steps_max)
 
-    #(array([[    , )
     true_measurements_out = []
     for measurement in true_measurements:
-        # measurement is at time t
         for target in measurement:
             true_measurements_out.append(target)
 
     false_measurements_out = []
     for measurement in false_measurements:
-        # measurement is at time t
         for target in measurement:
             false_measurements_out.append(target)
 
     true_measurements_out = np.array((true_measurements_out))
     false_measurements_out = np.array((false_measurements_out))
-
-    # Trajectories:
-    #[{0: array([[ 2.69295696, -0.20089073,  0.81526024,  0.48486329,  0.        ],
-     #  [ 2.76901123, -0.1427008 ,  0.64528989,  0.63871589,  0.1       ]]), 1: 
-
-    # array with dict, where key=id and value= array([[]]) of the historical track for each object
 
     trajectory = {}
 
@@ -206,6 +200,63 @@ def label_at_time_from_gt(gt, time):
     return [label_tensor]
 
 
+def to_matlab(tensor):
+    """
+    Angels Matlab PMBM implementation uses z = [cell, cell, ..., cell]
+    where each cell is a 2xN array of measurements in x, y for that step
+    """
+
+    tensor = tensor[0]
+    t_max = tensor[-1].cpu().detach().numpy()[-1]
+    n_max = int(t_max / 0.1)
+
+    z_matlab = []
+
+    for step in range(n_max):
+        time = np.float32(np.round(step * 0.1, 1))
+        z_at_time = []
+        for measurement in tensor:
+            measurement = measurement.cpu().detach().numpy()
+            time_at_measurement = np.round(measurement[-1], 1)
+
+            if time_at_measurement == time:
+                z_range = measurement[0]
+                z_bearing = measurement[2]
+                x = z_range * np.cos(z_bearing)
+                y = z_range * np.sin(z_bearing)
+                z_at_time.append([x, y])
+        z_matlab.append(z_at_time)
+
+    return z_matlab
+
+def to_matlab_range_bearing(tensor):
+    """
+    Angels Matlab PMBM implementation uses z = [cell, cell, ..., cell]
+    where each cell is a 2xN array of measurements in x, y for that step
+    """
+
+    tensor = tensor[0]
+    t_max = tensor[-1].cpu().detach().numpy()[-1]
+    n_max = int(t_max / 0.1)
+
+    z_matlab = []
+
+    for step in range(n_max):
+        time = np.float32(np.round(step * 0.1, 1))
+        z_at_time = []
+        for measurement in tensor:
+            measurement = measurement.cpu().detach().numpy()
+            time_at_measurement = np.round(measurement[-1], 1)
+
+            if time_at_measurement == time:
+                z_range = measurement[0]
+                z_bearing = measurement[2]
+                c = np.cos(z_bearing)
+                s = np.sin(z_bearing)
+                z_at_time.append([c, s, z_range])
+        z_matlab.append(z_at_time)
+
+    return z_matlab
 
 
 if __name__ == "__main__":
@@ -213,14 +264,24 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-s", "--scenario")
     parser.add_argument("-tp", "--task_params")
+    parser.add_argument("-nc", "--num_runs")
     args = parser.parse_args()
     params = load_yaml_into_dotdict(args.task_params)
+    if args.num_runs is None:
+        num_runs = 1
+    else:
+        num_runs = int(args.num_runs)
 
 
     gt = pd.read_csv(args.scenario, delimiter=',') # assume: [id, x, y, vx, vy, t]
 
-    tensor, _, _, traj = tensor_from_gt(gt, params)
-    label = label_at_step_from_gt(gt, 0)
-    print(label)
-    #print(traj)
-    #print(tensor)
+
+    #matlab_tensor = to_matlab(tensor)
+    #io.savemat('Z_matlab.mat', {'Z': matlab_tensor})  
+    num = re.search(r'\d+', args.scenario).group()
+    ts = re.search(r'\d+', args.task_params).group()
+    for i in range(num_runs):
+        tensor, _, _, traj = tensor_from_gt(gt, params)
+        matlab_tensor = to_matlab_range_bearing(tensor)
+        io.savemat(f'Z_range_bearing_{num}_tracks_task_{ts}_{i+1}.mat', {'Z': matlab_tensor})   
+    

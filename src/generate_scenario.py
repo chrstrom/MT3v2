@@ -20,6 +20,7 @@ from modules.loss import MotLoss
 
 from modules.models.mt3v2.mt3v2 import MT3V2
 from util.misc import NestedTensor, nested_tensor_from_tensor_list
+from matplotlib.lines import Line2D
 
 from matplotlib.patches import Ellipse
 
@@ -106,37 +107,44 @@ def get_rtheta_from_data(data):
 
     return r, theta
 
-def plot_ground_truth(trajectories, prior_lengths, n_historical_steps):
-    cmap = plt.cm.get_cmap('nipy_spectral', len(trajectories[0])) 
+def plot_ground_truth(trajectories, prior_lengths, n_historical_steps, at_time):
+    cmap = plt.cm.get_cmap('brg', len(trajectories[0])) 
 
     posterior_lengths = prior_lengths
+    times = []
+    for color_idx, (track_id, track) in enumerate(trajectories[0].items()):
+        times.append(track[-1][4])
+        
+    max_time = np.round(max(times)-1.9, 3)
     # TODO: Check if the current track has the current timestamp in it. If not, do not plot
     for color_idx, (track_id, track) in enumerate(trajectories[0].items()):
         Xgt, Ygt = get_xy_from_data(track)
+        current_time = np.round(track[-1][4] - 1.9, 3)
+        
 
         Xgt_size = posterior_lengths.get(track_id)
 
-        # TODO: cleanup, since this needs to be commented for manual scenario creation
         #if Xgt_size != Xgt[-1] and Xgt_size != -1: # Hack to ensure that only active tracks are drawn
-        posterior_lengths[track_id] = Xgt[-1]
-        n_hist = min(len(Xgt), n_historical_steps)
+        if current_time == max_time:
+            posterior_lengths[track_id] = Xgt[-1]
+            n_hist = min(len(Xgt), n_historical_steps)
 
-        alphas = np.exp(5*np.linspace(0.8, 1, n_hist)) # The constant multiplied here is the rate of decay (higher = more decay)
-        alphas = alphas / np.max(alphas)
-        alphas = np.flip(alphas)
+            alphas = np.exp(5*np.linspace(0.8, 1, n_hist)) # The constant multiplied here is the rate of decay (higher = more decay)
+            alphas = alphas / np.max(alphas)
+            alphas = np.flip(alphas)
 
-        for i in range(n_hist):
-            if i == 0:
-                plt.plot(Xgt[-i-3:-i-1], Ygt[-i-3:-i-1], '-', c=cmap(color_idx), alpha = alphas[i], label=f"Track #{track_id}", markersize=5)
-            else:
-                plt.plot(Xgt[-i-3:-i-1], Ygt[-i-3:-i-1], '-', c=cmap(color_idx),  alpha = alphas[i], markersize=5)
+            for i in range(n_hist):
+                    plt.plot(Xgt[-i-3:-i-1], Ygt[-i-3:-i-1], '-', c=cmap(color_idx),  alpha = alphas[i], markersize=5)
 
-        VXgt, VYgt = get_vxvy_from_data(track)
+            VXgt, VYgt = get_vxvy_from_data(track)
 
-        # Plot GT diamond and velocity arrow
-        plt.plot(Xgt[-1], Ygt[-1], marker='D', color='g', markersize=5, label="Latest gt")
-        if do_plot_vel:
-            plt.arrow(Xgt[-1], Ygt[-1], VXgt[-1], VYgt[-1], color='g', head_width=0.2, length_includes_head=True)
+            # Plot GT diamond and velocity arrow
+            try:
+                plt.plot(Xgt[-2], Ygt[-2], marker='D', color='g', markersize=5) #, label="Latest gt")
+            except Exception as e:
+                plt.plot(Xgt[-1], Ygt[-1], marker='D', color='g', markersize=5)#, label="Latest gt")
+            if do_plot_vel:
+                plt.arrow(Xgt[-1], Ygt[-1], VXgt[-1], VYgt[-1], color='g', head_width=0.2, length_includes_head=True)
 
 
         else:
@@ -162,9 +170,10 @@ def scatter_and_decay(measurements, color="k", marker=".", label="", exponential
 
     for i in range(timesteps):
         index_for_time = np.where(t == np.round(starting_time + i * 0.1, 3))[0]
-
-        plt.scatter(X[index_for_time], Y[index_for_time], c=color, marker=marker, alpha = alphas[i], label=label, s=20)
-
+        if i == 0:
+            plt.scatter(X[index_for_time], Y[index_for_time], c=color, marker=marker, alpha = alphas[i], s=20)# label=label, s=20)
+        else:
+            plt.scatter(X[index_for_time], Y[index_for_time], c=color, marker=marker, alpha = alphas[i], s=20)
 
 def pad_to_batch_max(training_data, max_len):
     batch_size = len(training_data)
@@ -223,7 +232,7 @@ def output_truth_plot(ax, prediction, indices, batch, params):
         if i in indices:
             if do_plot_preds:
                 if once:
-                    p = ax.plot(pos_x, pos_y, marker='o', color='r', markersize=5, label="Latest pred")
+                    p = ax.plot(pos_x, pos_y, marker='o', color='r', markersize=5)#, label="Model prediction")
                     once = False
                 else:                
                     # Plot predicted positions
@@ -241,17 +250,17 @@ def output_truth_plot(ax, prediction, indices, batch, params):
                                     color=color, alpha=0.4)
 
                 ax.add_patch(ell_position)
-                if do_plot_vel:
-                    ell_velocity = Ellipse(xy=(pos_x + vel_x, pos_y + vel_y), width=uncertainties[i, 2]*4,
-                                        height=uncertainties[i, 3]*4, edgecolor=color, linestyle='--', facecolor='none')
-                    ax.add_patch(ell_velocity)
+                # if do_plot_vel:
+                #     ell_velocity = Ellipse(xy=(pos_x + vel_x, pos_y + vel_y), width=uncertainties[i, 2]*4,
+                #                         height=uncertainties[i, 3]*4, edgecolor=color, linestyle='--', facecolor='none')
+                #     ax.add_patch(ell_velocity)
 
 
 
         else:
             if do_plot_unmatched_hypotheses:
                 if once:
-                    p = ax.plot(pos_x, pos_y, marker='*', color='k', label='Unmatched Predicted Object', markersize=5)
+                    p = ax.plot(pos_x, pos_y, marker='*', color='m',markersize=5 )# label='Unmatched hypothesis')
                     once = False
                 else:
                     p = ax.plot(pos_x, pos_y, marker='*', color='m', markersize=5)
@@ -300,13 +309,13 @@ def step_once(event):
     if do_plot:
         clipped_true_measurements = clip_measurements(true_measurements, M, timestep)
         clipped_false_measurements = clip_measurements(false_measurements, M, timestep)
-        clipped_trajectories = clip_trajectories(trajectories, N, timestep-M)
+        clipped_trajectories = clip_trajectories(trajectories, N, timestep)
 
 
-        scatter_and_decay(clipped_true_measurements, color="r", label= "True measurements", marker="x")
-        scatter_and_decay(clipped_false_measurements, color="k", label="False measurements", marker=".")
+        scatter_and_decay(clipped_true_measurements, color="k",  marker="x" )#, label= "True measurements")
+        scatter_and_decay(clipped_false_measurements, color="k", marker=".")#, label="False measurements")
 
-        prior_lengths = plot_ground_truth(clipped_trajectories, prior_lengths, M)
+        prior_lengths = plot_ground_truth(clipped_trajectories, prior_lengths, M, np.round(timestep * 0.1, 3))
         output_truth_plot(output_ax, prediction, gospa_alive_indices[0][0], clipped_measurements, params)
 
         output_ax.set_aspect('equal', 'box')
@@ -317,10 +326,22 @@ def step_once(event):
         output_ax.set_xlim([-mlim, mlim]) 
         output_ax.set_ylim([-mlim, mlim]) 
 
+        legend_handles = []
+
+        legend_handles.append(Line2D([0], [0], marker='o', color='w', label='MT3 estimates', markerfacecolor='r', markersize=7))
+        legend_handles.append(Line2D([0], [0], marker='*', color='w', label='Dead MB components', markerfacecolor='m', markersize=10))
+        legend_handles.append(Line2D([0], [0], label='Ground truth tracks', color='k'))
+        legend_handles.append(Line2D([0], [0], marker='X', color='w', label='True measurements', markerfacecolor='k', markersize=7))
+        legend_handles.append(Line2D([0], [0], marker='.', color='w', label='False measurements', markerfacecolor='k', markersize=10))
+        legend_handles.append(Line2D([0], [0], marker='D', color='w', label='Current targets', markerfacecolor='g', markersize=7))
+        plt.legend(handles=legend_handles)
+
+
         fig.canvas.draw()
-        fig.canvas.flush_events()
-        time.sleep(0.1)
-        output_ax.clear()
+
+        #fig.canvas.flush_events()
+        #time.sleep(0.1)
+        #output_ax.clear()
 
     timestep += 1
 
@@ -395,14 +416,14 @@ if __name__ == "__main__":
     measurements = NestedTensor(tensor, mask)
 
     # For "normal" scenarios
-    measurements, labels, unique_ids, _, trajectories, true_measurements, false_measurements = data_generator.get_batch()
+    #measurements, labels, unique_ids, _, trajectories, true_measurements, false_measurements = data_generator.get_batch()
 
     do_plot = True
     do_plot_preds = True
     do_plot_ellipse = True
-    do_plot_vel = True
+    do_plot_vel = False
     do_plot_unmatched_hypotheses = True
-    do_interactive = False
+    do_interactive = True
 
     if not do_interactive and do_plot:
         plt.ion() # Required for dynamic plot updates
@@ -435,6 +456,25 @@ if __name__ == "__main__":
     # tracks were active at the last timestep.
 
     # TODO: How to test for active hypotheses for each time step. I.e. is there a probability array that can be printed?
+    from matplotlib.widgets import Button
+
+    def next(event):
+        fig.canvas.flush_events()
+        time.sleep(0.1)
+        output_ax.clear()
+
+    b_ax = plt.axes([0.8, 0.0, 0.1, 0.05])
+    bclear = Button(b_ax, 'Clear')
+    plt.sca(output_ax)
+
+    b_ax = plt.axes([0.6, 0.0, 0.1, 0.05])
+    bnext = Button(b_ax, 'Next')
+    plt.sca(output_ax)
+
+
+    bclear.on_clicked(next)
+    bnext.on_clicked(step_once)
+    plt.sca(output_ax)
 
 
     n_mc = 1
@@ -443,9 +483,13 @@ if __name__ == "__main__":
     if do_interactive:
         try:
             fig.canvas.mpl_connect('key_press_event', step_once)
-            leg = output_ax.legend()
-            for lh in leg.legendHandles: 
-                lh.set_alpha(1)
+            # leg = output_ax.legend()
+            # for lh in leg.legendHandles: 
+            #     lh.set_alpha(1)
+
+            #ground_truths = mpatches.Patch(color='red', label='The red data')
+            #blue_patch = mpatches.Patch(color='blue', label='The blue data')
+            #output_ax.legend()
 
             plt.show()
         except RuntimeError as e:
