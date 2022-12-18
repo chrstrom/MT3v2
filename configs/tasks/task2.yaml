@@ -10,8 +10,8 @@ data_generation:
     process_noise_variance: 0.9
     measurement_noise_stds: [0.075, 0.977866322, 0.1]  # from resolution values of realistic model in good region of FOV
     n_avg_false_measurements : 40
-    n_avg_starting_objects: 6
-    avg_gt_objects: 6.0 # Computed on 1k samples
+    n_avg_starting_objects: 8
+    avg_gt_objects: 8.0 # Computed on 1k samples
     field_of_view:
         min_range: 0.0
         max_range: 25.0

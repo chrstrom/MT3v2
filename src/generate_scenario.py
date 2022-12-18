@@ -35,8 +35,7 @@ def clip_measurements(measurements, N, offset=0):
     measurements = measurements[0]
     clipped_measurements = []
     for measurement in measurements:
-
-        if offset * dt < measurement[3] <= (N + offset) * dt:
+        if np.round(offset * dt, 3) < np.round(measurement[3], 3) <= np.round((N + offset) * dt, 3):
             clipped_measurements.append(measurement.tolist())
 
     return tuple(np.array([clipped_measurements]))
@@ -134,15 +133,15 @@ def plot_ground_truth(trajectories, prior_lengths, n_historical_steps, at_time):
             alphas = np.flip(alphas)
 
             for i in range(n_hist):
-                    plt.plot(Xgt[-i-3:-i-1], Ygt[-i-3:-i-1], '-', c=cmap(color_idx),  alpha = alphas[i], markersize=5)
+                plt.plot(Xgt[-i-3:-i-1], Ygt[-i-3:-i-1], '-', c=cmap(color_idx),  alpha = alphas[i], linewidth=5)
 
             VXgt, VYgt = get_vxvy_from_data(track)
 
             # Plot GT diamond and velocity arrow
             try:
-                plt.plot(Xgt[-2], Ygt[-2], marker='D', color='g', markersize=5) #, label="Latest gt")
+                plt.plot(Xgt[-2], Ygt[-2], marker='D', color='g', markersize=7) #, label="Latest gt")
             except Exception as e:
-                plt.plot(Xgt[-1], Ygt[-1], marker='D', color='g', markersize=5)#, label="Latest gt")
+                plt.plot(Xgt[-1], Ygt[-1], marker='D', color='g', markersize=7)#, label="Latest gt")
             if do_plot_vel:
                 plt.arrow(Xgt[-1], Ygt[-1], VXgt[-1], VYgt[-1], color='g', head_width=0.2, length_includes_head=True)
 
@@ -167,13 +166,16 @@ def scatter_and_decay(measurements, color="k", marker=".", label="", exponential
     else:
         alphas = np.linspace(0.1, 1, timesteps)
 
-
     for i in range(timesteps):
-        index_for_time = np.where(t == np.round(starting_time + i * 0.1, 3))[0]
-        if i == 0:
-            plt.scatter(X[index_for_time], Y[index_for_time], c=color, marker=marker, alpha = alphas[i], s=20)# label=label, s=20)
-        else:
-            plt.scatter(X[index_for_time], Y[index_for_time], c=color, marker=marker, alpha = alphas[i], s=20)
+        time = np.round(starting_time + i * 0.1, 3)
+
+        index_for_time = []
+
+        for j, ts in enumerate(t):
+            if np.round(ts, 3) == time:
+                index_for_time.append(j)
+
+        plt.scatter(X[index_for_time], Y[index_for_time], c=color, marker=marker, alpha = alphas[i], s=60)# label=label, s=20)
 
 def pad_to_batch_max(training_data, max_len):
     batch_size = len(training_data)
@@ -231,18 +233,15 @@ def output_truth_plot(ax, prediction, indices, batch, params):
 
         if i in indices:
             if do_plot_preds:
-                if once:
-                    p = ax.plot(pos_x, pos_y, marker='o', color='r', markersize=5)#, label="Model prediction")
-                    once = False
-                else:                
-                    # Plot predicted positions
-                    p = ax.plot(pos_x, pos_y, marker='o', color='r', markersize=5)
+
+                p = ax.plot(pos_x, pos_y, marker='o', color='r', markersize=10)
                 
                 color = p[0].get_color()
-
+            else:
+                color = "k"
             # Plot arrows that indicate velocities for each object
             if params.data_generation.prediction_target == 'position_and_velocity' and do_plot_vel:
-                ax.arrow(pos_x, pos_y, vel_x, vel_y, color=color, head_width=0.2, linestyle='--', length_includes_head=True)
+                ax.arrow(pos_x, pos_y, vel_x, vel_y, color="r", head_width=0.2, linestyle='--', length_includes_head=True)
 
             # Plot uncertainties (2-sigma ellipse)
             if uncertainties is not None and do_plot_ellipse:
@@ -259,14 +258,11 @@ def output_truth_plot(ax, prediction, indices, batch, params):
 
         else:
             if do_plot_unmatched_hypotheses:
-                if once:
-                    p = ax.plot(pos_x, pos_y, marker='*', color='m',markersize=5 )# label='Unmatched hypothesis')
-                    once = False
-                else:
-                    p = ax.plot(pos_x, pos_y, marker='*', color='m', markersize=5)
 
-                if params.data_generation.prediction_target == 'position_and_velocity' and do_plot_vel:
-                    ax.arrow(pos_x, pos_y, vel_x, vel_y, color='k', head_width=0.2, linestyle='--', length_includes_head=True)
+                p = ax.plot(pos_x, pos_y, marker='*', color='m', markersize=10)
+
+                #if params.data_generation.prediction_target == 'position_and_velocity' and do_plot_vel:
+                 #   ax.arrow(pos_x, pos_y, vel_x, vel_y, color='k', head_width=0.2, linestyle='--', length_includes_head=True)
 
 
 def step_once(event):
@@ -318,23 +314,30 @@ def step_once(event):
         prior_lengths = plot_ground_truth(clipped_trajectories, prior_lengths, M, np.round(timestep * 0.1, 3))
         output_truth_plot(output_ax, prediction, gospa_alive_indices[0][0], clipped_measurements, params)
 
-        output_ax.set_aspect('equal', 'box')
-        output_ax.set_ylabel('North')
-        output_ax.set_xlabel('East')
+ 
         output_ax.grid('on')
         mlim = 20
         output_ax.set_xlim([-mlim, mlim]) 
         output_ax.set_ylim([-mlim, mlim]) 
 
+        fontsize = 26
+        plt.xlabel("x [m]", fontsize=fontsize)
+        plt.ylabel("y [m]", fontsize=fontsize)
+
+        plt.gca().set_aspect('equal')
+
+        plt.xticks(fontsize=fontsize)
+        plt.yticks(fontsize=fontsize)
+
         legend_handles = []
 
-        legend_handles.append(Line2D([0], [0], marker='o', color='w', label='MT3 estimates', markerfacecolor='r', markersize=7))
-        legend_handles.append(Line2D([0], [0], marker='*', color='w', label='Dead MB components', markerfacecolor='m', markersize=10))
+        #legend_handles.append(Line2D([0], [0], marker='o', color='w', label='MT3 estimates', markerfacecolor='r', markersize=15))
+        #legend_handles.append(Line2D([0], [0], marker='*', color='w', label='Dead MB components', markerfacecolor='m', markersize=20))
         legend_handles.append(Line2D([0], [0], label='Ground truth tracks', color='k'))
-        legend_handles.append(Line2D([0], [0], marker='X', color='w', label='True measurements', markerfacecolor='k', markersize=7))
-        legend_handles.append(Line2D([0], [0], marker='.', color='w', label='False measurements', markerfacecolor='k', markersize=10))
-        legend_handles.append(Line2D([0], [0], marker='D', color='w', label='Current targets', markerfacecolor='g', markersize=7))
-        plt.legend(handles=legend_handles)
+        legend_handles.append(Line2D([0], [0], marker='X', color='w', label='True measurements', markerfacecolor='k', markersize=15))
+        legend_handles.append(Line2D([0], [0], marker='.', color='w', label='False measurements', markerfacecolor='k', markersize=20))
+        legend_handles.append(Line2D([0], [0], marker='D', color='w', label='Current targets', markerfacecolor='g', markersize=15))
+        plt.legend(loc="upper left", handles=legend_handles, prop={'size': 16})
 
 
         fig.canvas.draw()
@@ -389,7 +392,7 @@ if __name__ == "__main__":
     params.data_generation.seed = params.general.pytorch_and_numpy_seed #2335718734 #random.randint(0, 9999999999999999999) # Tune this to get different runs
 
     data_generator = DataGenerator(params)
-    last_filename = "C:/Users/chris/MT3v2/task2/checkpoints/" + "checkpoint_gradient_step_699999"
+    last_filename = "C:/Users/chris/MT3v2/task1/checkpoints/" + "checkpoint_gradient_step_999999"
 
     # Load model weights and pass model to correct device
     prev = params.data_generation.n_timesteps
@@ -418,21 +421,21 @@ if __name__ == "__main__":
     # For "normal" scenarios
     #measurements, labels, unique_ids, _, trajectories, true_measurements, false_measurements = data_generator.get_batch()
 
-    do_plot = True
-    do_plot_preds = True
-    do_plot_ellipse = True
+    do_plot = False
+    do_plot_preds = False
+    do_plot_ellipse = False
     do_plot_vel = False
-    do_plot_unmatched_hypotheses = True
-    do_interactive = True
+    do_plot_unmatched_hypotheses = False
+    do_interactive = False
 
     if not do_interactive and do_plot:
         plt.ion() # Required for dynamic plot updates
     if do_plot:
         fig, output_ax = plt.subplots() 
 
-    K = 10 # amount of gt in the past to plot.
+    K = 20 # amount of gt in the past to plot.
     N = 20 # Track length to consider. This cannot be longer than 20 since the learned position encoding is fixed in size
-    M = 20 # amount of measurements in the past to plot.
+    M = 10 # amount of measurements in the past to plot.
 
     prior_lengths = {}
     timestep = 20 # Have to start at 20 to avoid problems with the network 
@@ -458,23 +461,26 @@ if __name__ == "__main__":
     # TODO: How to test for active hypotheses for each time step. I.e. is there a probability array that can be printed?
     from matplotlib.widgets import Button
 
-    def next(event):
-        fig.canvas.flush_events()
-        time.sleep(0.1)
-        output_ax.clear()
-
-    b_ax = plt.axes([0.8, 0.0, 0.1, 0.05])
-    bclear = Button(b_ax, 'Clear')
-    plt.sca(output_ax)
-
-    b_ax = plt.axes([0.6, 0.0, 0.1, 0.05])
-    bnext = Button(b_ax, 'Next')
-    plt.sca(output_ax)
 
 
-    bclear.on_clicked(next)
-    bnext.on_clicked(step_once)
-    plt.sca(output_ax)
+    if do_plot:
+
+        def next(event):
+            fig.canvas.flush_events()
+            time.sleep(0.1)
+            output_ax.clear()
+        b_ax = plt.axes([0.8, 0.0, 0.1, 0.05])
+        bclear = Button(b_ax, 'Clear')
+        plt.sca(output_ax)
+
+        b_ax = plt.axes([0.6, 0.0, 0.1, 0.05])
+        bnext = Button(b_ax, 'Next')
+        plt.sca(output_ax)
+
+
+        bclear.on_clicked(next)
+        bnext.on_clicked(step_once)
+        plt.sca(output_ax)
 
 
     n_mc = 1
