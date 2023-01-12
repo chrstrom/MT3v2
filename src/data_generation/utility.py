@@ -1,5 +1,7 @@
 import numpy as np
 
+import csv 
+
 from constant_velocity_object import CVObject
 
 def cv_object_from_r_theta(r, theta, id, sigma):
