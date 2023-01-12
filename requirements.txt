@@ -1,0 +1,8 @@
+# Torch and CUDA!
+tqdm
+pandas
+matplotlib
+scipy
+pyyaml
+csv
+regex
