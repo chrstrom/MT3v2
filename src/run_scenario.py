@@ -24,7 +24,7 @@ from matplotlib.lines import Line2D
 
 from matplotlib.patches import Ellipse
 
-from data_loader import tensor_from_gt, label_at_step_from_gt
+from load_data import tensor_from_gt, label_at_step_from_gt
 
 def clip_measurements(measurements, N, offset=0):
     """
